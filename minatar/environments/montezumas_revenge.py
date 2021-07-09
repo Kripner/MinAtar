@@ -15,7 +15,7 @@ class Env:
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
     gravity = 0.2
-    jump_force = 0.4
+    jump_force = 0.8
 
     def __init__(self, ramping=None, random_state=None):
         self.channels = Env.channels
@@ -24,37 +24,50 @@ class Env:
         self.reset()
 
     def act(self, action_num):
+        if self.player_speed[0] >= -10e-3:
+            self.jumping = False
+
         action = Env.action_map[action_num]
         new_player_pos = self._handle_movement(action)
         new_player_cell = Env._position_to_cell(new_player_pos)
+
+        crashed = False
         if not self.level.is_inside(new_player_cell):
-            self._try_changing_level(new_player_cell)
+            crashed = not self._try_changing_level(new_player_cell)
         elif self.level.at(new_player_cell) == LevelTile.wall:
-            self.player_speed = np.array([0, 0], dtype=np.float32)
+            crashed = True
         else:
             self.player_pos = new_player_pos
+
+        if crashed:
+            self.player_speed = np.array([0, 0], dtype=np.float32)
 
         self._update_state()
         return (0, False)  # reward, terminated
 
     def _handle_movement(self, action):
-        new_player_pos = self.player_pos + self.player_speed
+        player_cell = Env._position_to_cell(self.player_pos)
+        cell_bellow = (player_cell[0] + 1, player_cell[1])
+        if self.level.is_full(cell_bellow):
+            self.player_speed[0] = 0
+            if not self.jumping and action == 'jump':
+                self.jumping = True
+                self.player_speed[0] -= Env.jump_force
+        else:
+            self.player_speed[0] += Env.gravity
 
+        new_player_pos = self.player_pos + self.player_speed
         if action == 'left':
             new_player_pos[1] -= Env.walking_speed
         if action == 'right':
             new_player_pos[1] += Env.walking_speed
 
-        player_cell = Env._position_to_cell(self.player_pos)
-        cell_bellow = (player_cell[0] + 1, player_cell[1])
-        if action == 'jump' and self.level.is_full(cell_bellow):
-            self.player_speed[0] -= Env.jump_force
-        self.player_speed[0] += Env.gravity
         return new_player_pos
 
     def reset(self):
         self._change_level('lvl-0', initial_level=True)
         self.player_speed = np.array([0, 0], dtype=np.float32)
+        self.jumping = False
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
@@ -102,8 +115,8 @@ class Env:
             print(next_neighbour)
             self._change_level(self.level.neighbours[next_neighbour])
             self._jump_to_cell(next_location)
-        else:
-            self.player_speed = np.array([0, 0], dtype=np.float32)
+            return True
+        return False
 
     def _change_level(self, lvl_name, initial_level=False):
         self.level = load_level(lvl_name)
