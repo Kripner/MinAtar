@@ -20,7 +20,7 @@ parser.add_argument("--game", "-g", type=str)
 args = parser.parse_args()
 
 # Setup game environment and GUI
-env = Environment(args.game)
+env = Environment(args.game, sticky_action_prob=0)
 gui = GUI(env.game_name(), env.n_channels)
 
 # Thread safe variables for use with GUI
@@ -36,7 +36,7 @@ is_terminate = Tk.BooleanVar()
 is_terminate.set(False)
 
 # Map input keys to agent actions
-key_action_map = {' ':5, 'left':1, 'up':2, 'right':3, 'down':4}
+key_action_map = {' ':5, 'space': 5, 'left':1, 'up':2, 'right':3, 'down':4}
 
 # Key press handler for human player
 def on_key_event(event):
