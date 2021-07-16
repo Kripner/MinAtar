@@ -10,25 +10,34 @@ class Env:
     channels = {
         'player': 0,
         'wall': 1,
-        'gauge': 2
+        'gauge': 2,
+        'lava': 3
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
-    gravity = 0.2
-    jump_force = 0.8
+    gravity = 0.3
+    jump_force = 1
 
+    # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
         self.channels = Env.channels
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.room_size[0], Level.room_size[1] + 1)  # one row contains the HUD
+        # For documentation purposes, overridden in reset().
+        self.player_speed, self.jumping, self.player_pos = None, None, None
         self.reset()
+
+    def reset(self):
+        self._change_level('lvl-0', initial_level=True)
+        self.player_speed = np.array([0, 0], dtype=np.float32)
+        self.jumping = False
 
     def act(self, action_num):
         if self.player_speed[0] >= -10e-3:
             self.jumping = False
 
         action = Env.action_map[action_num]
-        new_player_pos = self._handle_movement(action)
+        new_player_pos = self._calculate_new_position(action)
         new_player_cell = Env._position_to_cell(new_player_pos)
 
         crashed = False
@@ -38,14 +47,19 @@ class Env:
             crashed = True
         else:
             self.player_pos = new_player_pos
+            if self.level.at(new_player_cell) == LevelTile.lava:
+                return 0, True  # player died
 
         if crashed:
             self.player_speed = np.array([0, 0], dtype=np.float32)
 
         self._update_state()
-        return (0, False)  # reward, terminated
+        return 0, False  # reward, terminated
 
-    def _handle_movement(self, action):
+    # Calculates new position of the player not counting in collisions.
+    def _calculate_new_position(self, action):
+        # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
+        # player was a single point.
         player_cell = Env._position_to_cell(self.player_pos)
         cell_bellow = (player_cell[0] + 1, player_cell[1])
         if self.level.is_full(cell_bellow):
@@ -63,11 +77,6 @@ class Env:
             new_player_pos[1] += Env.walking_speed
 
         return new_player_pos
-
-    def reset(self):
-        self._change_level('lvl-0', initial_level=True)
-        self.player_speed = np.array([0, 0], dtype=np.float32)
-        self.jumping = False
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
@@ -112,7 +121,7 @@ class Env:
             next_location = (0, x)
 
         if next_neighbour in self.level.neighbours:
-            print(next_neighbour)
+            print('Transitioning to ' + next_neighbour)
             self._change_level(self.level.neighbours[next_neighbour])
             self._jump_to_cell(next_location)
             return True
@@ -148,10 +157,11 @@ class Level:
                          for y in range(Level.room_size[1])
                          for x in range(Level.room_size[0])
                          if room_data[y][x] == LevelTile.player_start]
-        assert (len(player_starts) == 1)
-        self.player_start = player_starts[0]
+        assert (len(player_starts) <= 1)
+        self.player_start = player_starts[0] if len(player_starts) == 1 else None
 
-    def is_inside(self, cell):
+    @staticmethod
+    def is_inside(cell):
         y, x = cell
         return 0 <= x < Level.room_size[0] and 0 <= y < Level.room_size[1]
 
@@ -166,10 +176,12 @@ class LevelTile(Enum):
     empty = 0
     wall = 1
     player_start = 2
+    lava = 3
 
 
 _tile_to_channel = {
-    LevelTile.wall: 'wall'
+    LevelTile.wall: 'wall',
+    LevelTile.lava: 'lava'
 }
 
 
@@ -198,5 +210,6 @@ def load_level_data(data_file):
 _color_to_tile = {
     (255, 255, 255): LevelTile.empty,
     (0, 0, 0): LevelTile.wall,
-    (0, 255, 0): LevelTile.player_start
+    (0, 255, 0): LevelTile.player_start,
+    (255, 0, 0): LevelTile.lava
 }
