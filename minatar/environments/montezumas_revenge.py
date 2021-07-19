@@ -25,11 +25,12 @@ class Env:
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.room_size[0], Level.room_size[1] + 1)  # one row contains the HUD
         # For documentation purposes, overridden in reset().
-        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder = None, None, None, None
+        self.levels, self.player_speed, self.player_pos, self.player_state, self.exiting_ladder = None, None, None, None, None
         self.reset()
 
     def reset(self):
-        self._change_level('lvl-0', initial_level=True)
+        self.levels = LevelCache()
+        self._change_level('lvl-0', use_start_position=True)
         self.player_speed = np.array([0, 0], dtype=np.float32)
         self.player_state = PlayerState.standing
         self.exiting_ladder = False
@@ -152,9 +153,9 @@ class Env:
             return True
         return False
 
-    def _change_level(self, lvl_name, initial_level=False):
-        self.level = load_level(lvl_name)
-        if initial_level:
+    def _change_level(self, lvl_name, use_start_position=False):
+        self.level = self.levels.get_level(lvl_name)
+        if use_start_position:
             self.player_pos = Env._cell_to_position(self.level.player_start)
         self.screen_state = self._create_state()
 
@@ -203,6 +204,39 @@ class Level:
         return self.room_data[position[0]][position[1]]
 
 
+class LevelCache:
+    def __init__(self):
+        self.levels = dict()
+
+    def get_level(self, level_name):
+        if level_name not in self.levels:
+            self.levels[level_name] = LevelCache._load_level(level_name)
+        return self.levels[level_name]
+
+    @staticmethod
+    def _load_level(level_name):
+        file_name = _get_file_location(level_name + '.json')
+        with open(file_name, 'r') as level_file:
+            data = json.load(level_file)
+            room_data = LevelCache._load_level_data(_get_file_location(data['data_file']))
+            neighbours = {neighbour: data[neighbour] for neighbour in Level.neighbours_names if
+                          neighbour in data}
+            return Level(room_data, neighbours)
+
+    @staticmethod
+    def _load_level_data(data_file):
+        assert (data_file[-4:] == '.png')
+        data_image = Image.open(data_file)
+        data_pixels = data_image.load()
+        assert (data_image.size == Level.room_size)
+        w, h = data_image.size
+        return [[_color_to_tile[data_pixels[x, y]] for x in range(w)] for y in range(h)]
+
+
+def _get_file_location(file_name):
+    return os.path.join('data/montezumas-revenge', file_name)
+
+
 class LevelTile(Enum):
     empty = 0
     wall = 1
@@ -216,29 +250,6 @@ _tile_to_channel = {
     LevelTile.lava: 'lava',
     LevelTile.ladder: 'ladder'
 }
-
-
-def load_level(level_name):
-    file_name = get_file_location(level_name + '.json')
-    with open(file_name, 'r') as level_file:
-        data = json.load(level_file)
-        room_data = load_level_data(get_file_location(data['data_file']))
-        neighbours = {neighbour: data[neighbour] for neighbour in Level.neighbours_names if neighbour in data}
-        return Level(room_data, neighbours)
-
-
-def get_file_location(file_name):
-    return os.path.join('data/montezumas-revenge', file_name)
-
-
-def load_level_data(data_file):
-    assert (data_file[-4:] == '.png')
-    data_image = Image.open(data_file)
-    data_pixels = data_image.load()
-    assert (data_image.size == Level.room_size)
-    w, h = data_image.size
-    return [[_color_to_tile[data_pixels[x, y]] for x in range(w)] for y in range(h)]
-
 
 _color_to_tile = {
     (255, 255, 255): LevelTile.empty,
