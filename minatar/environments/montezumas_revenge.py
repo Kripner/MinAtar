@@ -200,8 +200,7 @@ class Player:
     def _get_new_player_state(self):
         player_cell = Env.position_to_cell(self.player_pos)
         cell_bellow = (player_cell[0] + 1, player_cell[1])
-        standing, on_ladder, flying = \
-            self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder, self.player_state == PlayerState.flying
+        standing, on_ladder, flying = self._one_hot_state()
         if flying and self.environment.level.is_full(cell_bellow):
             return PlayerState.standing
         if standing and not self.environment.level.is_full(cell_bellow):
@@ -220,8 +219,7 @@ class Player:
         # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
         # player was a single point.
         self.player_state = self._get_new_player_state()
-        standing, on_ladder, flying = \
-            self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder, self.player_state == PlayerState.flying
+        standing, on_ladder, flying = self._one_hot_state()
         ladder_exiting_action = False
         if standing or on_ladder:
             self.player_speed[0] = 0
@@ -245,6 +243,10 @@ class Player:
             self.exiting_ladder = True
 
         return new_player_pos
+
+    def _one_hot_state(self):
+        return self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder,\
+               self.player_state == PlayerState.flying
 
 
 class Enemy:
