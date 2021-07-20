@@ -9,11 +9,12 @@ import math
 class Env:
     channels = {
         'wall': 0,
-        'gauge': 1,
-        'lava': 2,
-        'ladder': 3,
-        'player': 4,
-        'enemy': 5
+        'gauge_background': 1,
+        'gauge_health': 2,
+        'lava': 3,
+        'ladder': 4,
+        'player': 5,
+        'enemy': 6
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -36,17 +37,27 @@ class Env:
         self.player.reset()
         self.screen_state = self._create_state()
 
+    # called after player loses one hearth
+    def _soft_reset(self):
+        self._change_level('lvl-0')
+        self.player.soft_reset()
+        self.screen_state = self._create_state()
+
     def act(self, action_num):
         action = Env.action_map[action_num]
         self.player.update(action)
         self.level.update()
-        self.screen_state = self._update_state(self.screen_state)
         if self._has_collided():
-            return 0, True  # player died
+            if self.player.health == 0:
+                self.screen_state = self._update_state(self.screen_state)  # get the last frame
+                return 0, True  # player died
+            self.player.health -= 1
+            self._soft_reset()
+        self.screen_state = self._update_state(self.screen_state)
         return 0, False  # reward, terminated
 
     def _has_collided(self):
-        player_cell = Env.position_to_cell(self.player_pos)
+        player_cell = Env.position_to_cell(self.player.player_pos)
         if self.level.at(player_cell) == LevelTile.lava:
             return True
         for e in self.level.enemies:
@@ -61,21 +72,24 @@ class Env:
 
     def _create_state(self):
         screen_state = np.zeros(self.state_shape(), dtype=bool)
-        screen_state[0, :, self.channels['gauge']] = True
+        screen_state[0, :, self.channels['gauge_background']] = True
         lvl = self.level.room_data
         for y in range(Level.room_size[1]):
             for x in range(Level.room_size[0]):
                 tile = lvl[y][x]
                 if tile in _tile_to_channel:
                     screen_state[y + 1, x, self.channels[_tile_to_channel[tile]]] = True
-        player_cell = Env.position_to_cell(self.player_pos)
+        player_cell = Env.position_to_cell(self.player.player_pos)
         screen_state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
         return screen_state
 
     def _update_state(self, state):
         state[:, :, self.channels['player']] = False
-        player_cell = Env.position_to_cell(self.player_pos)
+        player_cell = Env.position_to_cell(self.player.player_pos)
         state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
+
+        state[0, :, self.channels['gauge_health']] = False
+        state[0, 0:self.player.health, self.channels['gauge_health']] = True
 
         state[:, :, self.channels['enemy']] = False
         for e in self.level.enemies:
@@ -110,7 +124,7 @@ class Env:
         self.level = self.levels.get_level(lvl_name)
 
     def _jump_to_cell(self, cell):
-        self.player_pos = Env.cell_to_position(cell)
+        self.player.player_pos = Env.cell_to_position(cell)
 
     @staticmethod
     def position_to_cell(position):
@@ -169,14 +183,20 @@ class Level:
 
 
 class Player:
+    _max_hearths = 5
+
     def __init__(self, environment):
         self.environment = environment
         # For documentation purposes, overridden in reset().
-        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder = \
-            None, None, None, None
-        self.reset()
+        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health = \
+            None, None, None, None, None
 
     def reset(self):
+        self.soft_reset()
+        self.health = Player._max_hearths
+
+    # called after player loses one hearth
+    def soft_reset(self):
         self.player_pos = Env.cell_to_position(self.environment.level.player_start)
         self.player_speed = np.array([0, 0], dtype=np.float32)
         self.player_state = PlayerState.standing
@@ -245,7 +265,7 @@ class Player:
         return new_player_pos
 
     def _one_hot_state(self):
-        return self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder,\
+        return self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder, \
                self.player_state == PlayerState.flying
 
 
