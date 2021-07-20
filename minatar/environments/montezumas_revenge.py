@@ -13,6 +13,7 @@ class Env:
         'lava': 2,
         'ladder': 3,
         'player': 4,
+        'enemy': 5
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -25,7 +26,8 @@ class Env:
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.room_size[0], Level.room_size[1] + 1)  # one row contains the HUD
         # For documentation purposes, overridden in reset().
-        self.levels, self.player_speed, self.player_pos, self.player_state, self.exiting_ladder = None, None, None, None, None
+        self.levels, self.level, self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.screen_state = \
+            None, None, None, None, None, None, None
         self.reset()
 
     def reset(self):
@@ -47,14 +49,23 @@ class Env:
             crashed = True
         else:
             self.player_pos = new_player_pos
-            if self.level.at(new_player_cell) == LevelTile.lava:
-                return 0, True  # player died
 
         if crashed:
             self.player_speed = np.array([0, 0], dtype=np.float32)
 
-        self._update_state()
+        self.level.update()
+        self.screen_state = self._update_state(self.screen_state)
+        if self._has_collided():
+            return 0, True  # player died
         return 0, False  # reward, terminated
+
+    def _has_collided(self):
+        player_cell = Env._position_to_cell(self.player_pos)
+        if self.level.at(player_cell) == LevelTile.lava:
+            return True
+        for e in self.level.enemies:
+            if e.enemy_cell == player_cell:
+                return True
 
     def _get_new_player_state(self):
         player_cell = Env._position_to_cell(self.player_pos)
@@ -118,17 +129,21 @@ class Env:
         for y in range(Level.room_size[1]):
             for x in range(Level.room_size[0]):
                 tile = lvl[y][x]
-                if tile == LevelTile.empty or tile == LevelTile.player_start:
-                    continue
-                screen_state[y + 1, x, self.channels[_tile_to_channel[tile]]] = True
+                if tile in _tile_to_channel:
+                    screen_state[y + 1, x, self.channels[_tile_to_channel[tile]]] = True
         player_cell = Env._position_to_cell(self.player_pos)
         screen_state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
         return screen_state
 
-    def _update_state(self):
-        self.screen_state[:, :, self.channels['player']] = False
+    def _update_state(self, state):
+        state[:, :, self.channels['player']] = False
         player_cell = Env._position_to_cell(self.player_pos)
-        self.screen_state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
+        state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
+
+        state[:, :, self.channels['enemy']] = False
+        for e in self.level.enemies:
+            state[e.enemy_cell[0] + 1, e.enemy_cell[1], self.channels['enemy']] = True
+        return state
 
     def _try_changing_level(self, new_player_cell):
         y, x = new_player_cell
@@ -191,6 +206,22 @@ class Level:
                          if room_data[y][x] == LevelTile.player_start]
         assert (len(player_starts) <= 1)
         self.player_start = player_starts[0] if len(player_starts) == 1 else None
+        # pick topmost leftmost cell from each enemy path
+        enemies_starts = [(y, x)
+                          for y in range(Level.room_size[1])
+                          for x in range(Level.room_size[0])
+                          if room_data[y][x] == LevelTile.enemy_path and
+                          room_data[y + 1][x] != LevelTile.enemy_path and
+                          room_data[y][x + 1] != LevelTile.enemy_path]
+        self.enemies = [Enemy(cell, self) for cell in enemies_starts]
+
+    def update(self):
+        for e in self.enemies:
+            e.update()
+
+    def reset(self):
+        for e in self.enemies:
+            e.reset()
 
     @staticmethod
     def is_inside(cell):
@@ -202,6 +233,53 @@ class Level:
 
     def at(self, position):
         return self.room_data[position[0]][position[1]]
+
+
+class Enemy:
+    _ticks_per_move = 2  # inverse of the speed of an enemy
+
+    def __init__(self, starting_cell, level):
+        self.starting_cell = starting_cell
+        self.level = level
+        # For documentation purposes, overridden in reset().
+        self.enemy_cell, self.ticks_since_move, self.previous_cell = None, None, None
+        self.reset()
+
+    def update(self):
+        if self.ticks_since_move + 1 == Enemy._ticks_per_move:
+            self._move()
+            self.ticks_since_move = 0
+        else:
+            self.ticks_since_move += 1
+
+    def _move(self):
+        path_neighbours = [c for c in neighbour_cells(self.enemy_cell) if self.level.at(c) == LevelTile.enemy_path]
+        assert (len(path_neighbours) <= 2)
+        if len(path_neighbours) == 0:
+            return  # stationary enemy
+        if len(path_neighbours) == 1:
+            next_cell = path_neighbours[0]
+        # len(path_neighbours) == 2
+        elif self.previous_cell is None:
+            next_cell = path_neighbours[0]  # choose one of the two
+        else:
+            next_cell = [c for c in path_neighbours if c != self.previous_cell][0]
+        self.previous_cell, self.enemy_cell = self.enemy_cell, next_cell
+
+    def reset(self):
+        self.enemy_cell = self.starting_cell
+        self.ticks_since_move = 0
+        self.previous_cell = None
+
+
+def neighbour_cells(cell):
+    y, x = cell
+    return [
+        (y + 1, x),
+        (y, x + 1),
+        (y - 1, x),
+        (y, x - 1)
+    ]
 
 
 class LevelCache:
@@ -243,6 +321,7 @@ class LevelTile(Enum):
     player_start = 2
     lava = 3
     ladder = 4
+    enemy_path = 5
 
 
 _tile_to_channel = {
@@ -256,5 +335,6 @@ _color_to_tile = {
     (0, 0, 0): LevelTile.wall,
     (0, 255, 0): LevelTile.player_start,
     (255, 0, 0): LevelTile.lava,
-    (255, 255, 0): LevelTile.ladder
+    (255, 255, 0): LevelTile.ladder,
+    (0, 255, 255): LevelTile.enemy_path
 }
