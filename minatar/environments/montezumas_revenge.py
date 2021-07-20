@@ -206,13 +206,11 @@ class Level:
                          if room_data[y][x] == LevelTile.player_start]
         assert (len(player_starts) <= 1)
         self.player_start = player_starts[0] if len(player_starts) == 1 else None
-        # pick topmost leftmost cell from each enemy path
+
         enemies_starts = [(y, x)
                           for y in range(Level.room_size[1])
                           for x in range(Level.room_size[0])
-                          if room_data[y][x] == LevelTile.enemy_path and
-                          room_data[y + 1][x] != LevelTile.enemy_path and
-                          room_data[y][x + 1] != LevelTile.enemy_path]
+                          if room_data[y][x] == LevelTile.enemy_start]
         self.enemies = [Enemy(cell, self) for cell in enemies_starts]
 
     def update(self):
@@ -253,11 +251,12 @@ class Enemy:
             self.ticks_since_move += 1
 
     def _move(self):
-        path_neighbours = [c for c in neighbour_cells(self.enemy_cell) if self.level.at(c) == LevelTile.enemy_path]
+        path_neighbours = [c for c in neighbour_cells(self.enemy_cell) if
+                           self.level.at(c) == LevelTile.enemy_path or self.level.at(c) == LevelTile.enemy_start]
         assert (len(path_neighbours) <= 2)
         if len(path_neighbours) == 0:
-            return  # stationary enemy
-        if len(path_neighbours) == 1:
+            next_cell = self.enemy_cell  # stationary enemy
+        elif len(path_neighbours) == 1:
             next_cell = path_neighbours[0]
         # len(path_neighbours) == 2
         elif self.previous_cell is None:
@@ -274,12 +273,14 @@ class Enemy:
 
 def neighbour_cells(cell):
     y, x = cell
-    return [
-        (y + 1, x),
-        (y, x + 1),
-        (y - 1, x),
-        (y, x - 1)
-    ]
+    if y != 0:
+        yield y - 1, x
+    if y != Level.room_size[1] - 1:
+        yield y + 1, x
+    if x != 0:
+        yield y, x - 1
+    if x != Level.room_size[0] - 1:
+        yield y, x + 1
 
 
 class LevelCache:
@@ -322,6 +323,7 @@ class LevelTile(Enum):
     lava = 3
     ladder = 4
     enemy_path = 5
+    enemy_start = 6
 
 
 _tile_to_channel = {
@@ -336,5 +338,6 @@ _color_to_tile = {
     (0, 255, 0): LevelTile.player_start,
     (255, 0, 0): LevelTile.lava,
     (255, 255, 0): LevelTile.ladder,
-    (0, 255, 255): LevelTile.enemy_path
+    (0, 255, 255): LevelTile.enemy_path,
+    (0, 0, 255): LevelTile.enemy_start
 }
