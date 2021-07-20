@@ -26,33 +26,19 @@ class Env:
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.room_size[0], Level.room_size[1] + 1)  # one row contains the HUD
         # For documentation purposes, overridden in reset().
-        self.levels, self.level, self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.screen_state = \
-            None, None, None, None, None, None, None
+        self.levels, self.level, self.screen_state = None, None, None
+        self.player = Player(self)
         self.reset()
 
     def reset(self):
         self.levels = LevelCache()
-        self._change_level('lvl-0', use_start_position=True)
-        self.player_speed = np.array([0, 0], dtype=np.float32)
-        self.player_state = PlayerState.standing
-        self.exiting_ladder = False
+        self._change_level('lvl-0')
+        self.player.reset()
+        self.screen_state = self._create_state()
 
     def act(self, action_num):
         action = Env.action_map[action_num]
-        new_player_pos = self._calculate_new_position(action)
-        new_player_cell = Env._position_to_cell(new_player_pos)
-
-        crashed = False
-        if not self.level.is_inside(new_player_cell):
-            crashed = not self._try_changing_level(new_player_cell)
-        elif self.level.at(new_player_cell) == LevelTile.wall:
-            crashed = True
-        else:
-            self.player_pos = new_player_pos
-
-        if crashed:
-            self.player_speed = np.array([0, 0], dtype=np.float32)
-
+        self.player.update(action)
         self.level.update()
         self.screen_state = self._update_state(self.screen_state)
         if self._has_collided():
@@ -60,61 +46,12 @@ class Env:
         return 0, False  # reward, terminated
 
     def _has_collided(self):
-        player_cell = Env._position_to_cell(self.player_pos)
+        player_cell = Env.position_to_cell(self.player_pos)
         if self.level.at(player_cell) == LevelTile.lava:
             return True
         for e in self.level.enemies:
             if e.enemy_cell == player_cell:
                 return True
-
-    def _get_new_player_state(self):
-        player_cell = Env._position_to_cell(self.player_pos)
-        cell_bellow = (player_cell[0] + 1, player_cell[1])
-        standing, on_ladder, flying = \
-            self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder, self.player_state == PlayerState.flying
-        if flying and self.level.is_full(cell_bellow):
-            return PlayerState.standing
-        if standing and not self.level.is_full(cell_bellow):
-            return PlayerState.flying
-        if on_ladder and self.exiting_ladder:
-            return PlayerState.flying
-        if self.level.at(player_cell) == LevelTile.ladder:
-            if not self.exiting_ladder:
-                return PlayerState.on_ladder
-        else:
-            self.exiting_ladder = False
-        return self.player_state
-
-    # Calculates new position of the player not counting in collisions.
-    def _calculate_new_position(self, action):
-        # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
-        # player was a single point.
-        self.player_state = self._get_new_player_state()
-        standing, on_ladder, flying = \
-            self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder, self.player_state == PlayerState.flying
-        ladder_exiting_action = False
-        if standing or on_ladder:
-            self.player_speed[0] = 0
-            if action == 'jump':
-                self.player_speed[0] -= Env.jump_force
-                ladder_exiting_action = True
-
-        if flying:
-            self.player_speed[0] += Env.gravity
-
-        new_player_pos = self.player_pos + self.player_speed
-        if standing or flying or on_ladder:
-            if action == 'left':
-                new_player_pos[1] -= Env.walking_speed
-                ladder_exiting_action = True
-            if action == 'right':
-                new_player_pos[1] += Env.walking_speed
-                ladder_exiting_action = True
-
-        if on_ladder and ladder_exiting_action:
-            self.exiting_ladder = True
-
-        return new_player_pos
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
@@ -131,13 +68,13 @@ class Env:
                 tile = lvl[y][x]
                 if tile in _tile_to_channel:
                     screen_state[y + 1, x, self.channels[_tile_to_channel[tile]]] = True
-        player_cell = Env._position_to_cell(self.player_pos)
+        player_cell = Env.position_to_cell(self.player_pos)
         screen_state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
         return screen_state
 
     def _update_state(self, state):
         state[:, :, self.channels['player']] = False
-        player_cell = Env._position_to_cell(self.player_pos)
+        player_cell = Env.position_to_cell(self.player_pos)
         state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
 
         state[:, :, self.channels['enemy']] = False
@@ -145,7 +82,7 @@ class Env:
             state[e.enemy_cell[0] + 1, e.enemy_cell[1], self.channels['enemy']] = True
         return state
 
-    def _try_changing_level(self, new_player_cell):
+    def try_changing_level(self, new_player_cell):
         y, x = new_player_cell
         next_neighbour = None
         next_location = None
@@ -165,25 +102,23 @@ class Env:
         if next_neighbour in self.level.neighbours:
             self._change_level(self.level.neighbours[next_neighbour])
             self._jump_to_cell(next_location)
+            self.screen_state = self._create_state()
             return True
         return False
 
-    def _change_level(self, lvl_name, use_start_position=False):
+    def _change_level(self, lvl_name):
         self.level = self.levels.get_level(lvl_name)
-        if use_start_position:
-            self.player_pos = Env._cell_to_position(self.level.player_start)
-        self.screen_state = self._create_state()
 
     def _jump_to_cell(self, cell):
-        self.player_pos = Env._cell_to_position(cell)
+        self.player_pos = Env.cell_to_position(cell)
 
     @staticmethod
-    def _position_to_cell(position):
+    def position_to_cell(position):
         y, x = position
         return math.floor(y), math.floor(x)
 
     @staticmethod
-    def _cell_to_position(cell):
+    def cell_to_position(cell):
         return cell
 
 
@@ -231,6 +166,85 @@ class Level:
 
     def at(self, position):
         return self.room_data[position[0]][position[1]]
+
+
+class Player:
+    def __init__(self, environment):
+        self.environment = environment
+        # For documentation purposes, overridden in reset().
+        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder = \
+            None, None, None, None
+        self.reset()
+
+    def reset(self):
+        self.player_pos = Env.cell_to_position(self.environment.level.player_start)
+        self.player_speed = np.array([0, 0], dtype=np.float32)
+        self.player_state = PlayerState.standing
+        self.exiting_ladder = False
+
+    def update(self, action):
+        new_player_pos = self._calculate_new_position(action)
+        new_player_cell = Env.position_to_cell(new_player_pos)
+
+        crashed = False
+        if not self.environment.level.is_inside(new_player_cell):
+            crashed = not self.environment.try_changing_level(new_player_cell)
+        elif self.environment.level.at(new_player_cell) == LevelTile.wall:
+            crashed = True
+        else:
+            self.player_pos = new_player_pos
+
+        if crashed:
+            self.player_speed = np.array([0, 0], dtype=np.float32)
+
+    def _get_new_player_state(self):
+        player_cell = Env.position_to_cell(self.player_pos)
+        cell_bellow = (player_cell[0] + 1, player_cell[1])
+        standing, on_ladder, flying = \
+            self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder, self.player_state == PlayerState.flying
+        if flying and self.environment.level.is_full(cell_bellow):
+            return PlayerState.standing
+        if standing and not self.environment.level.is_full(cell_bellow):
+            return PlayerState.flying
+        if on_ladder and self.exiting_ladder:
+            return PlayerState.flying
+        if self.environment.level.at(player_cell) == LevelTile.ladder:
+            if not self.exiting_ladder:
+                return PlayerState.on_ladder
+        else:
+            self.exiting_ladder = False
+        return self.player_state
+
+    # Calculates new position of the player not counting in collisions.
+    def _calculate_new_position(self, action):
+        # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
+        # player was a single point.
+        self.player_state = self._get_new_player_state()
+        standing, on_ladder, flying = \
+            self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder, self.player_state == PlayerState.flying
+        ladder_exiting_action = False
+        if standing or on_ladder:
+            self.player_speed[0] = 0
+            if action == 'jump':
+                self.player_speed[0] -= Env.jump_force
+                ladder_exiting_action = True
+
+        if flying:
+            self.player_speed[0] += Env.gravity
+
+        new_player_pos = self.player_pos + self.player_speed
+        if standing or flying or on_ladder:
+            if action == 'left':
+                new_player_pos[1] -= Env.walking_speed
+                ladder_exiting_action = True
+            if action == 'right':
+                new_player_pos[1] += Env.walking_speed
+                ladder_exiting_action = True
+
+        if on_ladder and ladder_exiting_action:
+            self.exiting_ladder = True
+
+        return new_player_pos
 
 
 class Enemy:
