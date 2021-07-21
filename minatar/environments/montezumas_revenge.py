@@ -27,20 +27,20 @@ class Env:
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.room_size[0], Level.room_size[1] + 1)  # one row contains the HUD
         # For documentation purposes, overridden in reset().
-        self.levels, self.level, self.screen_state = None, None, None
+        self.levels, self.level, self.checkpoint, self.screen_state = None, None, None, None
         self.player = Player(self)
         self.reset()
 
     def reset(self):
         self.levels = LevelCache()
         self._change_level('lvl-0')
+        self.checkpoint = self.level.player_start
         self.player.reset()
         self.screen_state = self._create_state()
 
     # called after player loses one hearth
-    def _soft_reset(self):
-        self._change_level('lvl-0')
-        self.player.soft_reset()
+    def _reset_to_checkpoint(self):
+        self.player.reset_to_checkpoint()
         self.screen_state = self._create_state()
 
     def act(self, action_num):
@@ -52,7 +52,7 @@ class Env:
                 self.screen_state = self._update_state(self.screen_state)  # get the last frame
                 return 0, True  # player died
             self.player.health -= 1
-            self._soft_reset()
+            self._reset_to_checkpoint()
         self.screen_state = self._update_state(self.screen_state)
         return 0, False  # reward, terminated
 
@@ -116,6 +116,7 @@ class Env:
         if next_neighbour in self.level.neighbours:
             self._change_level(self.level.neighbours[next_neighbour])
             self._jump_to_cell(next_location)
+            self.checkpoint = next_location
             self.screen_state = self._create_state()
             return True
         return False
@@ -192,12 +193,12 @@ class Player:
             None, None, None, None, None
 
     def reset(self):
-        self.soft_reset()
+        self.reset_to_checkpoint()
         self.health = Player._max_hearths
 
     # called after player loses one hearth
-    def soft_reset(self):
-        self.player_pos = Env.cell_to_position(self.environment.level.player_start)
+    def reset_to_checkpoint(self):
+        self.player_pos = Env.cell_to_position(self.environment.checkpoint)
         self.player_speed = np.array([0, 0], dtype=np.float32)
         self.player_state = PlayerState.standing
         self.exiting_ladder = False
