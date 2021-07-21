@@ -19,6 +19,7 @@ class Env:
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
+    ladder_speed = 0.5
     gravity = 0.3
     jump_force = 1
 
@@ -210,8 +211,8 @@ class Level:
         y, x = cell
         return 0 <= x < Level.room_size[0] and 0 <= y < Level.room_size[1]
 
-    def is_full(self, cell):
-        return (not self.is_inside(cell)) or self.at(cell) == LevelTile.wall
+    def is_standable_on(self, cell):
+        return (not self.is_inside(cell)) or self.at(cell) == LevelTile.wall or self.at(cell) == LevelTile.ladder
 
     def at(self, position):
         return self.room_data[position[0]][position[1]]
@@ -256,11 +257,12 @@ class Player:
         player_cell = Env.position_to_cell(self.player_pos)
         cell_bellow = (player_cell[0] + 1, player_cell[1])
         standing, on_ladder, flying = self._one_hot_state()
-        if flying and self.environment.level.is_full(cell_bellow):
-            return PlayerState.standing
-        if standing and not self.environment.level.is_full(cell_bellow):
+        if on_ladder and (self.environment.level.at(player_cell) != LevelTile.ladder or self.exiting_ladder):
+            self.exiting_ladder = False
             return PlayerState.flying
-        if on_ladder and self.exiting_ladder:
+        if flying and self.environment.level.is_standable_on(cell_bellow):
+            return PlayerState.standing
+        if standing and not self.environment.level.is_standable_on(cell_bellow):
             return PlayerState.flying
         if self.environment.level.at(player_cell) == LevelTile.ladder:
             if not self.exiting_ladder:
@@ -274,7 +276,10 @@ class Player:
         # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
         # player was a single point.
         self.player_state = self._get_new_player_state()
+        player_cell = Env.position_to_cell(self.player_pos)
+        cell_bellow = (player_cell[0] + 1, player_cell[1])
         standing, on_ladder, flying = self._one_hot_state()
+
         ladder_exiting_action = False
         if standing or on_ladder:
             self.player_speed[0] = 0
@@ -290,12 +295,24 @@ class Player:
             if action == 'left':
                 new_player_pos[1] -= Env.walking_speed
                 ladder_exiting_action = True
-            if action == 'right':
+            elif action == 'right':
                 new_player_pos[1] += Env.walking_speed
                 ladder_exiting_action = True
 
-        if on_ladder and ladder_exiting_action:
-            self.exiting_ladder = True
+        if on_ladder:
+            if ladder_exiting_action:
+                self.exiting_ladder = True
+            else:
+                if action == 'up':
+                    new_player_pos[0] -= Env.ladder_speed
+                elif action == 'down':
+                    new_player_pos[0] += Env.ladder_speed
+
+        if standing:
+            if self.environment.level.at(cell_bellow) == LevelTile.ladder and action == 'down':
+                new_player_pos[0] += Env.ladder_speed
+            elif self.environment.level.at(player_cell) == LevelTile.ladder and action == 'up':
+                new_player_pos[0] -= Env.ladder_speed
 
         return new_player_pos
 
