@@ -20,10 +20,12 @@ class Env:
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
+    lateral_jumping_speed = 0.5
     ladder_speed = 0.5
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 1
+    initial_level = 'room-0'
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -38,7 +40,7 @@ class Env:
 
     def reset(self):
         self.levels = LevelCache()
-        self._change_level('lvl-0')
+        self._change_level(Env.initial_level)
         self.soft_reset_position = self.level.player_start
         self.player.reset()
         self.screen_state = self._create_state()
@@ -300,13 +302,19 @@ class Player:
             self.player_speed[0] += Env.gravity
 
         new_player_pos = self.player_pos + self.player_speed
-        if standing or flying or on_ladder:
+        if standing or on_ladder:
             if action == 'left':
                 new_player_pos[1] -= Env.walking_speed
                 ladder_exiting_action = True
             elif action == 'right':
                 new_player_pos[1] += Env.walking_speed
                 ladder_exiting_action = True
+
+        if flying:
+            if action == 'left':
+                new_player_pos[1] -= Env.lateral_jumping_speed
+            elif action == 'right':
+                new_player_pos[1] += Env.lateral_jumping_speed
 
         if on_ladder:
             if ladder_exiting_action:
