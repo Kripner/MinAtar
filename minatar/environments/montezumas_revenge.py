@@ -29,7 +29,7 @@ class Env:
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.room_size[0], Level.room_size[1] + 1)  # one row contains the HUD
         # For documentation purposes, overridden in reset().
-        self.levels, self.level, self.soft_reset_position, self.screen_state, self.human_checkpoint =\
+        self.levels, self.level, self.soft_reset_position, self.screen_state, self.human_checkpoint = \
             None, None, None, None, None
         self.player = Player(self)
         self.reset()
@@ -256,18 +256,26 @@ class Player:
     def _get_new_player_state(self):
         player_cell = Env.position_to_cell(self.player_pos)
         cell_bellow = (player_cell[0] + 1, player_cell[1])
-        standing, on_ladder, flying = self._one_hot_state()
-        if on_ladder and (self.environment.level.at(player_cell) != LevelTile.ladder or self.exiting_ladder):
-            self.exiting_ladder = False
-            return PlayerState.flying
-        if flying and self.environment.level.is_standable_on(cell_bellow):
-            return PlayerState.standing
-        if standing and not self.environment.level.is_standable_on(cell_bellow):
-            return PlayerState.flying
-        if self.environment.level.at(player_cell) == LevelTile.ladder:
-            if not self.exiting_ladder:
+
+        can_be_on_ladder = self.environment.level.at(player_cell) == LevelTile.ladder
+        can_stand = (not Level.is_inside(cell_bellow)) or \
+                    self.environment.level.at(cell_bellow) == LevelTile.wall or \
+                    (self.environment.level.at(cell_bellow) == LevelTile.ladder and not can_be_on_ladder)
+
+        if self.player_state == PlayerState.flying:
+            if can_be_on_ladder and not self.exiting_ladder:
                 return PlayerState.on_ladder
-        else:
+            if can_stand:
+                return PlayerState.standing
+        if self.player_state == PlayerState.standing:
+            if not can_stand:
+                return PlayerState.flying
+        if self.player_state == PlayerState.on_ladder:
+            if self.exiting_ladder or not can_be_on_ladder:
+                self.exiting_ladder = False
+                return PlayerState.standing if can_stand else PlayerState.flying
+
+        if not can_be_on_ladder:
             self.exiting_ladder = False
         return self.player_state
 
@@ -286,6 +294,7 @@ class Player:
             if action == 'jump':
                 self.player_speed[0] -= Env.jump_force
                 ladder_exiting_action = True
+                self.player_state = PlayerState.flying
 
         if flying:
             self.player_speed[0] += Env.gravity
@@ -311,8 +320,10 @@ class Player:
         if standing:
             if self.environment.level.at(cell_bellow) == LevelTile.ladder and action == 'down':
                 new_player_pos[0] += Env.ladder_speed
+                self.player_state = PlayerState.on_ladder
             elif self.environment.level.at(player_cell) == LevelTile.ladder and action == 'up':
                 new_player_pos[0] -= Env.ladder_speed
+                self.player_state = PlayerState.on_ladder
 
         return new_player_pos
 
