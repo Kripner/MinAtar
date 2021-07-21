@@ -1,4 +1,5 @@
 from enum import Enum
+from collections import namedtuple
 import numpy as np
 import os
 import json
@@ -27,20 +28,21 @@ class Env:
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.room_size[0], Level.room_size[1] + 1)  # one row contains the HUD
         # For documentation purposes, overridden in reset().
-        self.levels, self.level, self.checkpoint, self.screen_state = None, None, None, None
+        self.levels, self.level, self.soft_reset_position, self.screen_state, self.human_checkpoint =\
+            None, None, None, None, None
         self.player = Player(self)
         self.reset()
 
     def reset(self):
         self.levels = LevelCache()
         self._change_level('lvl-0')
-        self.checkpoint = self.level.player_start
+        self.soft_reset_position = self.level.player_start
         self.player.reset()
         self.screen_state = self._create_state()
 
     # called after player loses one hearth
-    def _reset_to_checkpoint(self):
-        self.player.reset_to_checkpoint()
+    def _soft_reset(self):
+        self.player.soft_reset()
         self.screen_state = self._create_state()
 
     def act(self, action_num):
@@ -52,7 +54,7 @@ class Env:
                 self.screen_state = self._update_state(self.screen_state)  # get the last frame
                 return 0, True  # player died
             self.player.health -= 1
-            self._reset_to_checkpoint()
+            self._soft_reset()
         self.screen_state = self._update_state(self.screen_state)
         return 0, False  # reward, terminated
 
@@ -116,7 +118,7 @@ class Env:
         if next_neighbour in self.level.neighbours:
             self._change_level(self.level.neighbours[next_neighbour])
             self._jump_to_cell(next_location)
-            self.checkpoint = next_location
+            self.soft_reset_position = next_location
             self.screen_state = self._create_state()
             return True
         return False
@@ -136,6 +138,38 @@ class Env:
     def cell_to_position(cell):
         return cell
 
+    def _get_checkpoint(self):
+        return Checkpoint(
+            room_name=self.level.room_name,
+            soft_reset_position=self.soft_reset_position,
+            player_pos=self.player.player_pos,
+            player_speed=self.player.player_speed,
+            player_state=self.player.player_state,
+            exiting_ladder=self.player.exiting_ladder
+        )
+
+    def _apply_checkpoint(self, checkpoint):
+        self._change_level(checkpoint.room_name)
+        self.soft_reset_position = checkpoint.soft_reset_position
+        self.player.player_pos = checkpoint.player_pos
+        self.player.player_speed = checkpoint.player_speed
+        self.player.player_state = checkpoint.player_state
+        self.player.exiting_ladder = checkpoint.exiting_ladder
+        self.screen_state = self._create_state()
+
+    def handle_human_action(self, action):
+        action = action.lower()
+        if action == 's':  # save checkpoint
+            self.human_checkpoint = self._get_checkpoint()
+        elif action == 'l':  # load checkpoint
+            if self.human_checkpoint is not None:
+                self._apply_checkpoint(self.human_checkpoint)
+
+
+Checkpoint = namedtuple('Checkpoint',
+                        ['room_name', 'soft_reset_position', 'player_pos', 'player_speed',
+                         'player_state', 'exiting_ladder'])
+
 
 class PlayerState(Enum):
     standing = 0
@@ -147,8 +181,8 @@ class Level:
     room_size = (20, 19)  # (width, height)
     neighbours_names = ['left-neighbour', 'top-neighbour', 'right-neighbour', 'bottom-neighbour']
 
-    def __init__(self, room_data, neighbours):
-        self.room_data = room_data
+    def __init__(self, room_name, room_data, neighbours):
+        self.room_name, self.room_data = room_name, room_data
         self.neighbours = neighbours
         player_starts = [(y, x)
                          for y in range(Level.room_size[1])
@@ -193,12 +227,12 @@ class Player:
             None, None, None, None, None
 
     def reset(self):
-        self.reset_to_checkpoint()
+        self.soft_reset()
         self.health = Player._max_hearths
 
     # called after player loses one hearth
-    def reset_to_checkpoint(self):
-        self.player_pos = Env.cell_to_position(self.environment.checkpoint)
+    def soft_reset(self):
+        self.player_pos = Env.cell_to_position(self.environment.soft_reset_position)
         self.player_speed = np.array([0, 0], dtype=np.float32)
         self.player_state = PlayerState.standing
         self.exiting_ladder = False
@@ -337,7 +371,7 @@ class LevelCache:
             room_data = LevelCache._load_level_data(_get_file_location(data['data_file']))
             neighbours = {neighbour: data[neighbour] for neighbour in Level.neighbours_names if
                           neighbour in data}
-            return Level(room_data, neighbours)
+            return Level(level_name, room_data, neighbours)
 
     @staticmethod
     def _load_level_data(data_file):
