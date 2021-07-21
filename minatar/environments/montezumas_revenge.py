@@ -10,16 +10,18 @@ import math
 class Env:
     channels = {
         'wall': 0,
-        'gauge_background': 1,
-        'gauge_health': 2,
-        'lava': 3,
-        'ladder': 4,
-        'player': 5,
-        'enemy': 6
+        'moving_sand': 1,
+        'gauge_background': 2,
+        'gauge_health': 3,
+        'lava': 4,
+        'ladder': 5,
+        'player': 6,
+        'enemy': 7
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
     ladder_speed = 0.5
+    moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 1
 
@@ -211,9 +213,6 @@ class Level:
         y, x = cell
         return 0 <= x < Level.room_size[0] and 0 <= y < Level.room_size[1]
 
-    def is_standable_on(self, cell):
-        return (not self.is_inside(cell)) or self.at(cell) == LevelTile.wall or self.at(cell) == LevelTile.ladder
-
     def at(self, position):
         return self.room_data[position[0]][position[1]]
 
@@ -245,7 +244,7 @@ class Player:
         crashed = False
         if not self.environment.level.is_inside(new_player_cell):
             crashed = not self.environment.try_changing_level(new_player_cell)
-        elif self.environment.level.at(new_player_cell) == LevelTile.wall:
+        elif self.environment.level.at(new_player_cell) in [LevelTile.wall, LevelTile.moving_sand]:
             crashed = True
         else:
             self.player_pos = new_player_pos
@@ -260,6 +259,7 @@ class Player:
         can_be_on_ladder = self.environment.level.at(player_cell) == LevelTile.ladder
         can_stand = (not Level.is_inside(cell_bellow)) or \
                     self.environment.level.at(cell_bellow) == LevelTile.wall or \
+                    self.environment.level.at(cell_bellow) == LevelTile.moving_sand or \
                     (self.environment.level.at(cell_bellow) == LevelTile.ladder and not can_be_on_ladder)
 
         if self.player_state == PlayerState.flying:
@@ -324,6 +324,9 @@ class Player:
             elif self.environment.level.at(player_cell) == LevelTile.ladder and action == 'up':
                 new_player_pos[0] -= Env.ladder_speed
                 self.player_state = PlayerState.on_ladder
+
+            if self.environment.level.at(cell_bellow) == LevelTile.moving_sand:
+                new_player_pos[1] -= Env.moving_sand_speed
 
         return new_player_pos
 
@@ -423,12 +426,14 @@ class LevelTile(Enum):
     ladder = 4
     enemy_path = 5
     enemy_start = 6
+    moving_sand = 7
 
 
 _tile_to_channel = {
     LevelTile.wall: 'wall',
     LevelTile.lava: 'lava',
-    LevelTile.ladder: 'ladder'
+    LevelTile.ladder: 'ladder',
+    LevelTile.moving_sand: 'moving_sand'
 }
 
 _color_to_tile = {
@@ -438,5 +443,6 @@ _color_to_tile = {
     (255, 0, 0): LevelTile.lava,
     (255, 255, 0): LevelTile.ladder,
     (0, 255, 255): LevelTile.enemy_path,
-    (0, 0, 255): LevelTile.enemy_start
+    (0, 0, 255): LevelTile.enemy_start,
+    (255, 0, 255): LevelTile.moving_sand
 }
