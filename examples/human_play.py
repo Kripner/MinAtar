@@ -50,6 +50,15 @@ def on_key_event(event):
         # When new action is selected it has not yet been taken or released
         action_released.set(False)
         action_taken.set(False)
+    else:
+        try_delegate_unknown_action(event.key)
+
+
+def try_delegate_unknown_action(key):
+    e = env.env
+    if hasattr(e, 'handle_human_action') and callable(e.handle_human_action):
+        e.handle_human_action(key)
+
 
 # Key release handlr for human player
 def on_release_event(event):
