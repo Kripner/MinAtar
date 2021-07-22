@@ -444,13 +444,18 @@ _tile_to_channel = {
     LevelTile.moving_sand: 'moving_sand'
 }
 
+
+def _hex(hexcode):
+    return (hexcode >> 16) & 0xff, (hexcode >> 8) & 0xff, hexcode & 0xff
+
+
 _color_to_tile = {
-    (255, 255, 255): LevelTile.empty,
-    (0, 0, 0): LevelTile.wall,
-    (0, 255, 0): LevelTile.player_start,
-    (255, 0, 0): LevelTile.lava,
-    (255, 255, 0): LevelTile.ladder,
-    (0, 255, 255): LevelTile.enemy_path,
-    (0, 0, 255): LevelTile.enemy_start,
-    (255, 0, 255): LevelTile.moving_sand
+    _hex(0xffffff): LevelTile.empty,
+    _hex(0x000000): LevelTile.wall,
+    _hex(0x00ff00): LevelTile.player_start,
+    _hex(0xff0000): LevelTile.lava,
+    _hex(0xffff00): LevelTile.ladder,
+    _hex(0x00ffff): LevelTile.enemy_path,
+    _hex(0x0000ff): LevelTile.enemy_start,
+    _hex(0xff00ff): LevelTile.moving_sand
 }
