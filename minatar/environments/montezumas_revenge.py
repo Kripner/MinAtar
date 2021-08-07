@@ -289,7 +289,13 @@ class Door:
             moving_data[y][top_x] = MovingObject.door
 
     def update(self, player):
-        pass
+        if self.open or player.key_count == 0:
+            return
+        top_y, top_x = self.top_position
+        player_y, player_x = player.get_player_cell()
+        if abs(player_x - top_x) <= 1 and top_y <= player_y < top_y + self.height:
+            self.open = True
+            player.key_count -= 1
 
 
 class Key:
