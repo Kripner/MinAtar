@@ -12,14 +12,15 @@ class Env:
         'wall': 0,
         'moving_sand': 1,
         'door': 2,
-        'gauge_background': 3,
-        'gauge_health': 4,
-        'gauge_keys': 5,
-        'lava': 6,
-        'ladder': 7,
-        'player': 8,
-        'enemy': 9,
-        'key': 10
+        'laser_door': 3,
+        'gauge_background': 4,
+        'gauge_health': 5,
+        'gauge_keys': 6,
+        'lava': 7,
+        'ladder': 8,
+        'player': 9,
+        'enemy': 10,
+        'key': 11
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -57,7 +58,7 @@ class Env:
         action = Env.action_map[action_num]
         self.player.update(action)
         self.level.update(self.player)
-        if self._has_collided():
+        if self.player.dead or self._has_collided():
             if self.player.health == 0:
                 self._update_state(self.screen_state)  # get the last frame
                 return 0, True  # player died
@@ -217,7 +218,14 @@ class Level:
                           if room_data[y][x] == LevelTile.key]
         keys = [Key(cell, self) for cell in keys_positions]
 
-        self.moving_parts = enemies + doors + keys
+        laser_door_tops = [(y, x)
+                           for y in range(Level.room_size[1])
+                           for x in range(Level.room_size[0])
+                           if room_data[y][x] == LevelTile.laser_door and (
+                                   y - 1 < 0 or room_data[y - 1][x] != LevelTile.laser_door)]
+        laser_doors = [LaserDoor(cell, self) for cell in laser_door_tops]
+
+        self.moving_parts = enemies + doors + keys + laser_doors
 
         # Just for documentation, overridden in _update_moving_state.
         self.moving_data = None
@@ -327,19 +335,56 @@ class Key:
             player.key_count += 1
 
 
+class LaserDoor:
+    def __init__(self, top_position, room):
+        y, x = top_position
+        height = 1
+        while room.at((y + height, x)) == LevelTile.laser_door:
+            height += 1
+
+        self.top_position = top_position
+        self.height = height
+        self.open = False
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['laser_door']] = False
+
+    def add_to_state(self, state):
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        state[top_y + 1:top_y + self.height + 1, top_x, Env.channels['laser_door']] = True
+
+    def draw(self, moving_data):
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        for y in range(top_y, top_y + self.height):
+            moving_data[y][top_x] = MovingObject.laser_door
+
+    def update(self, player):
+        if self.open:
+            pass
+        top_y, top_x = self.top_position
+        player_y, player_x = player.get_player_cell()
+        if player_x == top_x and top_y <= player_y < top_y + self.height:
+            player.die()
+
+
 class Player:
     _max_hearths = 5
 
     def __init__(self, environment):
         self.environment = environment
         # For documentation purposes, overridden in reset().
-        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health = \
-            None, None, None, None, None
-        self.key_count = 0
+        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, self.key_count = \
+            None, None, None, None, None, None, None
 
     def reset(self):
         self.soft_reset()
         self.health = Player._max_hearths
+        self.key_count = 0
 
     # called after player loses one hearth
     def soft_reset(self):
@@ -347,9 +392,13 @@ class Player:
         self.player_speed = np.array([0, 0], dtype=np.float32)
         self.player_state = PlayerState.standing
         self.exiting_ladder = False
+        self.dead = False
 
     def get_player_cell(self):
         return Env.position_to_cell(self.player_pos)
+
+    def die(self):
+        self.dead = True
 
     @staticmethod
     def reset_state(state):
@@ -564,6 +613,7 @@ class MovingObject(Enum):
     enemy = 1
     door = 2
     key = 3
+    laser_door = 4
 
 
 class LevelTile(Enum):
@@ -577,6 +627,7 @@ class LevelTile(Enum):
     moving_sand = 7
     door = 8
     key = 9
+    laser_door = 10
 
 
 _tile_to_channel = {
@@ -601,5 +652,6 @@ _color_to_tile = {
     _hex(0x0000ff): LevelTile.enemy_start,
     _hex(0xff00ff): LevelTile.moving_sand,
     _hex(0xac6000): LevelTile.door,
-    _hex(0xac8f00): LevelTile.key
+    _hex(0xac8f00): LevelTile.key,
+    _hex(0x584052): LevelTile.laser_door
 }
