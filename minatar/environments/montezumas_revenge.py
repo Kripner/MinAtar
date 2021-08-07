@@ -14,10 +14,12 @@ class Env:
         'door': 2,
         'gauge_background': 3,
         'gauge_health': 4,
-        'lava': 5,
-        'ladder': 6,
-        'player': 7,
-        'enemy': 8
+        'gauge_keys': 5,
+        'lava': 6,
+        'ladder': 7,
+        'player': 8,
+        'enemy': 9,
+        'key': 10
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -54,7 +56,7 @@ class Env:
     def act(self, action_num):
         action = Env.action_map[action_num]
         self.player.update(action)
-        self.level.update()
+        self.level.update(self.player)
         if self._has_collided():
             if self.player.health == 0:
                 self._update_state(self.screen_state)  # get the last frame
@@ -92,8 +94,11 @@ class Env:
         Player.reset_state(state)
         self.player.add_to_state(state)
 
+        width, height = self.screen_size
         state[0, :, self.channels['gauge_health']] = False
         state[0, 0:self.player.health, self.channels['gauge_health']] = True
+        state[0, :, self.channels['gauge_keys']] = False
+        state[0, width - self.player.key_count:width, self.channels['gauge_keys']] = True
 
         self.level.update_state(state)
         return state
@@ -206,15 +211,21 @@ class Level:
                              y - 1 < 0 or room_data[y - 1][x] != LevelTile.door)]
         doors = [Door(cell, self) for cell in door_tops]
 
-        self.moving_parts = enemies + doors
+        keys_positions = [(y, x)
+                          for y in range(Level.room_size[1])
+                          for x in range(Level.room_size[0])
+                          if room_data[y][x] == LevelTile.key]
+        keys = [Key(cell, self) for cell in keys_positions]
+
+        self.moving_parts = enemies + doors + keys
 
         # Just for documentation, overridden in _update_moving_state.
         self.moving_data = None
         self._update_moving_state()
 
-    def update(self):
+    def update(self, player):
         for o in self.moving_parts:
-            o.update()
+            o.update(player)
         self._update_moving_state()
 
     def _update_moving_state(self):
@@ -228,6 +239,7 @@ class Level:
     def update_state(self, state):
         Enemy.reset_state(state)
         Door.reset_state(state)
+        Key.reset_state(state)
 
         for o in self.moving_parts:
             o.add_to_state(state)
@@ -276,8 +288,37 @@ class Door:
         for y in range(top_y, top_y + self.height):
             moving_data[y][top_x] = MovingObject.door
 
-    def update(self):
+    def update(self, player):
         pass
+
+
+class Key:
+    def __init__(self, position, room):
+        self.position = position
+        self.collected = False
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['key']] = False
+
+    def add_to_state(self, state):
+        if self.collected:
+            return
+        y, x = self.position
+        state[y + 1, x, Env.channels['key']] = True
+
+    def draw(self, moving_data):
+        if self.collected:
+            return
+        y, x = self.position
+        moving_data[y][x] = MovingObject.key
+
+    def update(self, player):
+        if self.collected:
+            return
+        if player.get_player_cell() == self.position:
+            self.collected = True
+            player.key_count += 1
 
 
 class Player:
@@ -288,6 +329,7 @@ class Player:
         # For documentation purposes, overridden in reset().
         self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health = \
             None, None, None, None, None
+        self.key_count = 0
 
     def reset(self):
         self.soft_reset()
@@ -299,6 +341,9 @@ class Player:
         self.player_speed = np.array([0, 0], dtype=np.float32)
         self.player_state = PlayerState.standing
         self.exiting_ladder = False
+
+    def get_player_cell(self):
+        return Env.position_to_cell(self.player_pos)
 
     @staticmethod
     def reset_state(state):
@@ -326,7 +371,7 @@ class Player:
             self.player_speed = np.array([0, 0], dtype=np.float32)
 
     def _get_new_player_state(self):
-        player_cell = Env.position_to_cell(self.player_pos)
+        player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
 
         can_be_on_ladder = self.environment.level.at(player_cell) == LevelTile.ladder
@@ -357,7 +402,7 @@ class Player:
         # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
         # player was a single point.
         self.player_state = self._get_new_player_state()
-        player_cell = Env.position_to_cell(self.player_pos)
+        player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
         standing, on_ladder, flying = self._one_hot_state()
 
@@ -435,7 +480,7 @@ class Enemy:
         y, x = self.enemy_cell
         moving_data[y][x] = MovingObject.enemy
 
-    def update(self):
+    def update(self, player):
         if self.ticks_since_move + 1 == Enemy._ticks_per_move:
             self._move()
             self.ticks_since_move = 0
@@ -509,9 +554,10 @@ def _get_file_location(file_name):
 
 
 class MovingObject(Enum):
-    none = 0,
-    enemy = 1,
+    none = 0
+    enemy = 1
     door = 2
+    key = 3
 
 
 class LevelTile(Enum):
@@ -524,6 +570,7 @@ class LevelTile(Enum):
     enemy_start = 6
     moving_sand = 7
     door = 8
+    key = 9
 
 
 _tile_to_channel = {
@@ -547,5 +594,6 @@ _color_to_tile = {
     _hex(0x00ffff): LevelTile.enemy_path,
     _hex(0x0000ff): LevelTile.enemy_start,
     _hex(0xff00ff): LevelTile.moving_sand,
-    _hex(0xac6000): LevelTile.door
+    _hex(0xac6000): LevelTile.door,
+    _hex(0xac8f00): LevelTile.key
 }
