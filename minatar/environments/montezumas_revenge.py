@@ -11,12 +11,13 @@ class Env:
     channels = {
         'wall': 0,
         'moving_sand': 1,
-        'gauge_background': 2,
-        'gauge_health': 3,
-        'lava': 4,
-        'ladder': 5,
-        'player': 6,
-        'enemy': 7
+        'door': 2,
+        'gauge_background': 3,
+        'gauge_health': 4,
+        'lava': 5,
+        'ladder': 6,
+        'player': 7,
+        'enemy': 8
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -56,20 +57,19 @@ class Env:
         self.level.update()
         if self._has_collided():
             if self.player.health == 0:
-                self.screen_state = self._update_state(self.screen_state)  # get the last frame
+                self._update_state(self.screen_state)  # get the last frame
                 return 0, True  # player died
             self.player.health -= 1
             self._soft_reset()
-        self.screen_state = self._update_state(self.screen_state)
+        self._update_state(self.screen_state)
         return 0, False  # reward, terminated
 
     def _has_collided(self):
         player_cell = Env.position_to_cell(self.player.player_pos)
         if self.level.at(player_cell) == LevelTile.lava:
             return True
-        for e in self.level.enemies:
-            if e.enemy_cell == player_cell:
-                return True
+        if self.level.at_moving(player_cell) == MovingObject.enemy:
+            return True
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
@@ -86,21 +86,16 @@ class Env:
                 tile = lvl[y][x]
                 if tile in _tile_to_channel:
                     screen_state[y + 1, x, self.channels[_tile_to_channel[tile]]] = True
-        player_cell = Env.position_to_cell(self.player.player_pos)
-        screen_state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
         return screen_state
 
     def _update_state(self, state):
-        state[:, :, self.channels['player']] = False
-        player_cell = Env.position_to_cell(self.player.player_pos)
-        state[player_cell[0] + 1, player_cell[1], self.channels['player']] = True
+        Player.reset_state(state)
+        self.player.add_to_state(state)
 
         state[0, :, self.channels['gauge_health']] = False
         state[0, 0:self.player.health, self.channels['gauge_health']] = True
 
-        state[:, :, self.channels['enemy']] = False
-        for e in self.level.enemies:
-            state[e.enemy_cell[0] + 1, e.enemy_cell[1], self.channels['enemy']] = True
+        self.level.update_state(state)
         return state
 
     def try_changing_level(self, new_player_cell):
@@ -187,7 +182,7 @@ class Level:
     neighbours_names = ['left-neighbour', 'top-neighbour', 'right-neighbour', 'bottom-neighbour']
 
     def __init__(self, room_name, room_data, neighbours):
-        self.room_name, self.room_data = room_name, room_data
+        self.room_name = room_name
         self.neighbours = neighbours
         player_starts = [(y, x)
                          for y in range(Level.room_size[1])
@@ -202,13 +197,35 @@ class Level:
                           if room_data[y][x] == LevelTile.enemy_start]
         self.enemies = [Enemy(cell, self) for cell in enemies_starts]
 
+        self.moving_parts = self.enemies
+
+        self.room_data = room_data
+        # Just for documentation, overridden in _update_room_data.
+        self.moving_data = None
+
     def update(self):
-        for e in self.enemies:
-            e.update()
+        for o in self.moving_parts:
+            o.update()
+        self._update_moving_state()
+
+    def _update_moving_state(self):
+        moving_data = [[MovingObject.none
+                        for _ in range(Level.room_size[0])]
+                       for _ in range(Level.room_size[1])]
+        for o in self.moving_parts:
+            o.draw(moving_data)
+        self.moving_data = moving_data
+
+    def update_state(self, state):
+        Enemy.reset_state(state)
+        Door.reset_state(state)
+
+        for o in self.moving_parts:
+            o.add_to_state(state)
 
     def reset(self):
-        for e in self.enemies:
-            e.reset()
+        for o in self.moving_parts:
+            o.reset()
 
     @staticmethod
     def is_inside(cell):
@@ -217,6 +234,26 @@ class Level:
 
     def at(self, position):
         return self.room_data[position[0]][position[1]]
+
+    def at_moving(self, position):
+        return self.moving_data[position[0]][position[1]]
+
+
+class Door:
+    def __init__(self, top_position, height):
+        self.top_position, self.height = top_position, height
+        self.open = False
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['door']] = False
+
+    def add_to_state(self, state):
+        y, x = self.top_position
+        state[y:y + self.height, x, Env.channels['door']] = True
+
+    def draw(self, moving_data):
+        pass
 
 
 class Player:
@@ -238,6 +275,14 @@ class Player:
         self.player_speed = np.array([0, 0], dtype=np.float32)
         self.player_state = PlayerState.standing
         self.exiting_ladder = False
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['player']] = False
+
+    def add_to_state(self, state):
+        player_cell = Env.position_to_cell(self.player_pos)
+        state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
 
     def update(self, action):
         new_player_pos = self._calculate_new_position(action)
@@ -353,6 +398,17 @@ class Enemy:
         self.enemy_cell, self.ticks_since_move, self.previous_cell = None, None, None
         self.reset()
 
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['enemy']] = False
+
+    def add_to_state(self, state):
+        state[self.enemy_cell[0] + 1, self.enemy_cell[1], Env.channels['enemy']] = True
+
+    def draw(self, moving_data):
+        y, x = self.enemy_cell
+        moving_data[y][x] = MovingObject.enemy
+
     def update(self):
         if self.ticks_since_move + 1 == Enemy._ticks_per_move:
             self._move()
@@ -426,6 +482,12 @@ def _get_file_location(file_name):
     return os.path.join('data/montezumas-revenge', file_name)
 
 
+class MovingObject(Enum):
+    none = 0,
+    enemy = 1,
+    door = 2
+
+
 class LevelTile(Enum):
     empty = 0
     wall = 1
@@ -435,6 +497,7 @@ class LevelTile(Enum):
     enemy_path = 5
     enemy_start = 6
     moving_sand = 7
+    door = 8
 
 
 _tile_to_channel = {
@@ -457,5 +520,6 @@ _color_to_tile = {
     _hex(0xffff00): LevelTile.ladder,
     _hex(0x00ffff): LevelTile.enemy_path,
     _hex(0x0000ff): LevelTile.enemy_start,
-    _hex(0xff00ff): LevelTile.moving_sand
+    _hex(0xff00ff): LevelTile.moving_sand,
+    _hex(0xac6000): LevelTile.door
 }
