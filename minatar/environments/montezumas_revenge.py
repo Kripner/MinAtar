@@ -270,15 +270,18 @@ class Level:
         y, x = cell
         return 0 <= x < Level.room_size[0] and 0 <= y < Level.room_size[1]
 
-    def at(self, position):
-        if not Level.is_inside(position):
+    def at(self, cell):
+        if not Level.is_inside(cell):
             return LevelTile.wall
-        return self.room_data[position[0]][position[1]]
+        return self.room_data[cell[0]][cell[1]]
 
-    def at_moving(self, position):
-        if not Level.is_inside(position):
+    def at_moving(self, cell):
+        if not Level.is_inside(cell):
             return LevelTile.empty
-        return self.moving_data[position[0]][position[1]]
+        return self.moving_data[cell[0]][cell[1]]
+
+    def is_solid_at(self, cell):
+        return self.at(cell) in [LevelTile.wall, LevelTile.moving_sand] or self.at_moving(cell) in [MovingObject.door]
 
 
 class Door:
@@ -467,17 +470,22 @@ class Player:
         state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
 
     def update(self, action):
+        y, x = self.get_player_cell()
         new_player_pos = self._calculate_new_position(action)
         new_player_cell = Env.position_to_cell(new_player_pos)
+        new_y, new_x = new_player_cell
 
         crashed = False
+        changed_level = False
         if not self.environment.level.is_inside(new_player_cell):
-            crashed = not self.environment.try_changing_level(new_player_cell)
-        elif self.environment.level.at(new_player_cell) in [LevelTile.wall, LevelTile.moving_sand]:
+            changed_level = self.environment.try_changing_level(new_player_cell)
+            crashed = not changed_level
+        elif not (new_x == x and new_y < y) and \
+                not self.environment.level.is_solid_at((y, x)) and \
+                self.environment.level.is_solid_at(new_player_cell):
             crashed = True
-        elif self.environment.level.at_moving(new_player_cell) in [MovingObject.door]:
-            crashed = True
-        else:
+
+        if not crashed and not changed_level:
             self.player_pos = new_player_pos
 
         if crashed:
