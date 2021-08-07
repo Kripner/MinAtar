@@ -183,6 +183,7 @@ class Level:
 
     def __init__(self, room_name, room_data, neighbours):
         self.room_name = room_name
+        self.room_data = room_data
         self.neighbours = neighbours
         player_starts = [(y, x)
                          for y in range(Level.room_size[1])
@@ -195,13 +196,21 @@ class Level:
                           for y in range(Level.room_size[1])
                           for x in range(Level.room_size[0])
                           if room_data[y][x] == LevelTile.enemy_start]
-        self.enemies = [Enemy(cell, self) for cell in enemies_starts]
+        enemies = [Enemy(cell, self) for cell in enemies_starts]
 
-        self.moving_parts = self.enemies
+        # Doors are supposed to be vertical bars. This detects the top of each such bar.
+        door_tops = [(y, x)
+                     for y in range(Level.room_size[1])
+                     for x in range(Level.room_size[0])
+                     if room_data[y][x] == LevelTile.door and (
+                             y - 1 < 0 or room_data[y - 1][x] != LevelTile.door)]
+        doors = [Door(cell, self) for cell in door_tops]
 
-        self.room_data = room_data
-        # Just for documentation, overridden in _update_room_data.
+        self.moving_parts = enemies + doors
+
+        # Just for documentation, overridden in _update_moving_state.
         self.moving_data = None
+        self._update_moving_state()
 
     def update(self):
         for o in self.moving_parts:
@@ -240,8 +249,14 @@ class Level:
 
 
 class Door:
-    def __init__(self, top_position, height):
-        self.top_position, self.height = top_position, height
+    def __init__(self, top_position, room):
+        y, x = top_position
+        height = 1
+        while room.at((y + height, x)) == LevelTile.door:
+            height += 1
+
+        self.top_position = top_position
+        self.height = height
         self.open = False
 
     @staticmethod
@@ -249,10 +264,19 @@ class Door:
         state[:, :, Env.channels['door']] = False
 
     def add_to_state(self, state):
-        y, x = self.top_position
-        state[y:y + self.height, x, Env.channels['door']] = True
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        state[top_y + 1:top_y + self.height + 1, top_x, Env.channels['door']] = True
 
     def draw(self, moving_data):
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        for y in range(top_y, top_y + self.height):
+            moving_data[y][top_x] = MovingObject.door
+
+    def update(self):
         pass
 
 
@@ -292,6 +316,8 @@ class Player:
         if not self.environment.level.is_inside(new_player_cell):
             crashed = not self.environment.try_changing_level(new_player_cell)
         elif self.environment.level.at(new_player_cell) in [LevelTile.wall, LevelTile.moving_sand]:
+            crashed = True
+        elif self.environment.level.at_moving(new_player_cell) == MovingObject.door:
             crashed = True
         else:
             self.player_pos = new_player_pos
