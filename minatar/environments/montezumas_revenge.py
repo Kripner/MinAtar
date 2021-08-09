@@ -9,19 +9,20 @@ import math
 
 class Env:
     channels = {
-        'wall': 0,
-        'disappearing_wall': 1,
-        'moving_sand': 2,
-        'door': 3,
-        'laser_door': 4,
-        'gauge_background': 5,
-        'gauge_health': 6,
-        'gauge_keys': 7,
-        'lava': 8,
-        'ladder': 9,
-        'player': 10,
-        'enemy': 11,
-        'key': 12
+        'treasure_room_background': 0,
+        'wall': 1,
+        'disappearing_wall': 2,
+        'moving_sand': 3,
+        'door': 4,
+        'laser_door': 5,
+        'gauge_background': 6,
+        'gauge_health': 7,
+        'gauge_keys': 8,
+        'lava': 9,
+        'ladder': 10,
+        'player': 11,
+        'enemy': 12,
+        'key': 13
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -30,7 +31,8 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 1
-    initial_room = 'room-35'  # TODO: change
+    initial_room = 'room-2'  # TODO: change
+    treasure_room_walk_speed = 1
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -61,8 +63,9 @@ class Env:
         self.trigger_screen_state_redraw()
 
     def act(self, action_num):
+        action = Env.action_map[action_num]
         if self.game_state == GameState.in_maze:
-            maze_event = self.maze.update(self.player, action_num)
+            maze_event = self.maze.update(self.player, action)
             if maze_event == MazeEvent.player_died:
                 if self.player.health == 0:
                     return 0, True  # player died
@@ -77,7 +80,7 @@ class Env:
             else:
                 assert maze_event is None
         elif self.game_state == GameState.in_treasure_room:
-            back_to_maze = self.treasure_room.update(self.player, action_num)
+            back_to_maze = self.treasure_room.update(self.player, action)
             if back_to_maze:
                 self._reset_to_starting_point()
         else:
@@ -98,7 +101,7 @@ class Env:
         screen_state = np.zeros(self.state_shape(), dtype=bool)
         if self.game_state == GameState.in_maze:
             # Initialize status bar.
-            screen_state[0, :, self.channels['gauge_background']] = True
+            screen_state[0, :, Env.channels['gauge_background']] = True
             # Let the maze initialize the rest.
             self.maze.initialize_screen_state(screen_state)
         elif self.game_state == GameState.in_treasure_room:
@@ -108,16 +111,16 @@ class Env:
         return screen_state
 
     def _update_screen_state(self, state):
+        Player.reset_state(state)
+        self.player.add_to_state(state)
+
         if self.game_state == GameState.in_maze:
             # Update status bar.
             width, height = self.screen_size
-            state[0, :, self.channels['gauge_health']] = False
-            state[0, 0:self.player.health, self.channels['gauge_health']] = True
-            state[0, :, self.channels['gauge_keys']] = False
-            state[0, width - self.player.key_count:width, self.channels['gauge_keys']] = True
-
-            Player.reset_state(state)
-            self.player.add_to_state(state)
+            state[0, :, Env.channels['gauge_health']] = False
+            state[0, 0:self.player.health, Env.channels['gauge_health']] = True
+            state[0, :, Env.channels['gauge_keys']] = False
+            state[0, width - self.player.key_count:width, Env.channels['gauge_keys']] = True
 
             self.maze.update_screen_state(state)
         elif self.game_state == GameState.in_treasure_room:
@@ -133,7 +136,7 @@ class Env:
 
     @staticmethod
     def cell_to_position(cell):
-        return cell
+        return np.array(cell, dtype=np.float32)
 
     def _get_checkpoint(self):
         return self.maze.get_checkpoint(self.player)
@@ -161,6 +164,7 @@ class Maze:
         # For documentation purposes, overridden in reset().
         self.rooms, self.room, self.soft_reset_position, = \
             None, None, None
+        self.pending_event = None
         self.reset()
 
     def reset(self):
@@ -179,15 +183,15 @@ class Maze:
     def update_screen_state(self, screen_state):
         self.room.update_screen_state(screen_state)
 
-    def update(self, player, action_num):
-        action = Env.action_map[action_num]
-        old_room = self.room
+    def update(self, player, action):
         player.update_inside_maze(action, self)
         self.room.update(player)
         if player.dead or self._has_collided(player):
             return MazeEvent.player_died
-        if old_room != self.room:
-            return MazeEvent.changed_room
+        if self.pending_event is not None:
+            event = self.pending_event
+            self.pending_event = None
+            return event
         return None
 
     def _has_collided(self, player):
@@ -216,9 +220,14 @@ class Maze:
             next_location = (0, x)
 
         if next_neighbour in self.room.neighbours:
-            self._change_room(self.room.neighbours[next_neighbour])
+            next_neighbour_name = self.room.neighbours[next_neighbour]
+            if next_neighbour_name == 'treasure_room':
+                self.pending_event = MazeEvent.entered_treasure_room
+            else:
+                self._change_room(next_neighbour_name)
+                self.soft_reset_position = next_location
+                self.pending_event = MazeEvent.changed_room
             player.player_pos = Env.cell_to_position(next_location)
-            self.soft_reset_position = next_location
             return True
         return False
 
@@ -258,12 +267,22 @@ class MazeEvent(Enum):
 
 
 class TreasureRoom:
+    ticks_before_ending = 20
+
+    def __init__(self):
+        self.ticks_since_start = 0
+
     # Returns whether the player's time in the treasure room has expired.
-    def update(self, player, action_num):
-        pass
+    def update(self, player, action):
+        self.ticks_since_start += 1
+        if self.ticks_since_start == TreasureRoom.ticks_before_ending:
+            return True
+        player.update_inside_treasure_room(action)
+
+        return False
 
     def initialize_screen_state(self, screen_state):
-        pass
+        screen_state[0, :, Env.channels['treasure_room_background']] = True
 
     def update_screen_state(self, screen_state):
         pass
@@ -557,6 +576,20 @@ class Player:
     def add_to_state(self, state):
         player_cell = Env.position_to_cell(self.player_pos)
         state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
+
+    def update_inside_treasure_room(self, action):
+        new_player_pos = self.player_pos
+        if action == 'left':
+            new_player_pos[1] -= Env.treasure_room_walk_speed
+        if action == 'right':
+            new_player_pos[1] += Env.treasure_room_walk_speed
+        if action == 'up':
+            new_player_pos[0] -= Env.treasure_room_walk_speed
+        if action == 'down':
+            new_player_pos[0] += Env.treasure_room_walk_speed
+        new_player_pos[0] = np.clip(new_player_pos[0], 0, Room.room_size[1] - 1)
+        new_player_pos[1] = np.clip(new_player_pos[1], 0, Room.room_size[0] - 1)
+        self.player_pos = new_player_pos
 
     def update_inside_maze(self, action, maze):
         curr_room = maze.room
