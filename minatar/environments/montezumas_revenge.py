@@ -30,24 +30,24 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 1
-    initial_level = 'room-12'  # TODO: change
+    initial_room = 'room-35'  # TODO: change
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
         self.channels = Env.channels
         self.random = np.random.RandomState() if random_state is None else random_state
-        self.screen_size = (Level.room_size[0], Level.room_size[1] + 1)  # one row contains the HUD
+        self.screen_size = (Room.room_size[0], Room.room_size[1] + 1)  # one row contains the HUD
         # For documentation purposes, overridden in reset().
-        self.levels, self.level, self.soft_reset_position, self.screen_state, self.human_checkpoint = \
+        self.rooms, self.room, self.soft_reset_position, self.screen_state, self.human_checkpoint = \
             None, None, None, None, None
         self.player = Player(self)
         self.reset()
 
     def reset(self):
-        self.levels = LevelCache()
-        self._change_level(Env.initial_level)
-        assert self.level.player_start is not None, 'Initial level does not specify initial player position.'
-        self.soft_reset_position = self.level.player_start
+        self.rooms = RoomCache()
+        self._change_room(Env.initial_room)
+        assert self.room.player_start is not None, 'Initial room does not specify initial player position.'
+        self.soft_reset_position = self.room.player_start
         self.player.reset()
         self.screen_state = self._create_state()
 
@@ -59,7 +59,7 @@ class Env:
     def act(self, action_num):
         action = Env.action_map[action_num]
         self.player.update(action)
-        self.level.update(self.player)
+        self.room.update(self.player)
         if self.player.dead or self._has_collided():
             if self.player.health == 0:
                 self._update_state(self.screen_state)  # get the last frame
@@ -71,9 +71,9 @@ class Env:
 
     def _has_collided(self):
         player_cell = Env.position_to_cell(self.player.player_pos)
-        if self.level.at(player_cell) == LevelTile.lava:
+        if self.room.at(player_cell) == RoomTile.lava:
             return True
-        if self.level.at_moving(player_cell) == MovingObject.enemy:
+        if self.room.at_moving(player_cell) == MovingObject.enemy:
             return True
 
     def state_shape(self):
@@ -85,9 +85,9 @@ class Env:
     def _create_state(self):
         screen_state = np.zeros(self.state_shape(), dtype=bool)
         screen_state[0, :, self.channels['gauge_background']] = True
-        lvl = self.level.room_data
-        for y in range(Level.room_size[1]):
-            for x in range(Level.room_size[0]):
+        lvl = self.room.room_data
+        for y in range(Room.room_size[1]):
+            for x in range(Room.room_size[0]):
                 tile = lvl[y][x]
                 if tile in _tile_to_channel:
                     screen_state[y + 1, x, self.channels[_tile_to_channel[tile]]] = True
@@ -103,36 +103,36 @@ class Env:
         state[0, :, self.channels['gauge_keys']] = False
         state[0, width - self.player.key_count:width, self.channels['gauge_keys']] = True
 
-        self.level.update_state(state)
+        self.room.update_state(state)
         return state
 
-    def try_changing_level(self, new_player_cell):
+    def try_changing_room(self, new_player_cell):
         y, x = new_player_cell
         next_neighbour = None
         next_location = None
         if x < 0:
             next_neighbour = 'left_neighbour'
-            next_location = (y, Level.room_size[0] - 1)
-        if x >= Level.room_size[0]:
+            next_location = (y, Room.room_size[0] - 1)
+        if x >= Room.room_size[0]:
             next_neighbour = 'right_neighbour'
             next_location = (y, 0)
         if y < 0:
             next_neighbour = 'top_neighbour'
-            next_location = (Level.room_size[1] - 1, x)
-        if y >= Level.room_size[1]:
+            next_location = (Room.room_size[1] - 1, x)
+        if y >= Room.room_size[1]:
             next_neighbour = 'bottom_neighbour'
             next_location = (0, x)
 
-        if next_neighbour in self.level.neighbours:
-            self._change_level(self.level.neighbours[next_neighbour])
+        if next_neighbour in self.room.neighbours:
+            self._change_room(self.room.neighbours[next_neighbour])
             self._jump_to_cell(next_location)
             self.soft_reset_position = next_location
             self.screen_state = self._create_state()
             return True
         return False
 
-    def _change_level(self, lvl_name):
-        self.level = self.levels.get_level(lvl_name)
+    def _change_room(self, lvl_name):
+        self.room = self.rooms.get_room(lvl_name)
 
     def _jump_to_cell(self, cell):
         self.player.player_pos = Env.cell_to_position(cell)
@@ -148,7 +148,7 @@ class Env:
 
     def _get_checkpoint(self):
         return Checkpoint(
-            room_name=self.level.room_name,
+            room_name=self.room.room_name,
             soft_reset_position=self.soft_reset_position,
             player_pos=self.player.player_pos,
             player_speed=self.player.player_speed,
@@ -157,7 +157,7 @@ class Env:
         )
 
     def _apply_checkpoint(self, checkpoint):
-        self._change_level(checkpoint.room_name)
+        self._change_room(checkpoint.room_name)
         self.soft_reset_position = checkpoint.soft_reset_position
         self.player.player_pos = checkpoint.player_pos
         self.player.player_speed = checkpoint.player_speed
@@ -185,7 +185,7 @@ class PlayerState(Enum):
     on_ladder = 2
 
 
-class Level:
+class Room:
     room_size = (20, 19)  # (width, height)
     neighbours_names = ['left_neighbour', 'top_neighbour', 'right_neighbour', 'bottom_neighbour']
 
@@ -194,43 +194,43 @@ class Level:
         self.room_data = room_data
         self.neighbours = neighbours
         player_starts = [(y, x)
-                         for y in range(Level.room_size[1])
-                         for x in range(Level.room_size[0])
-                         if room_data[y][x] == LevelTile.player_start]
+                         for y in range(Room.room_size[1])
+                         for x in range(Room.room_size[0])
+                         if room_data[y][x] == RoomTile.player_start]
         assert len(player_starts) <= 1
         self.player_start = player_starts[0] if len(player_starts) == 1 else None
 
         enemies_starts = [(y, x)
-                          for y in range(Level.room_size[1])
-                          for x in range(Level.room_size[0])
-                          if room_data[y][x] == LevelTile.enemy_start]
+                          for y in range(Room.room_size[1])
+                          for x in range(Room.room_size[0])
+                          if room_data[y][x] == RoomTile.enemy_start]
         enemies = [Enemy(cell, self) for cell in enemies_starts]
 
         # Doors are supposed to be vertical bars. This detects the top of each such bar.
         door_tops = [(y, x)
-                     for y in range(Level.room_size[1])
-                     for x in range(Level.room_size[0])
-                     if room_data[y][x] == LevelTile.door and (
-                             y - 1 < 0 or room_data[y - 1][x] != LevelTile.door)]
+                     for y in range(Room.room_size[1])
+                     for x in range(Room.room_size[0])
+                     if room_data[y][x] == RoomTile.door and (
+                             y - 1 < 0 or room_data[y - 1][x] != RoomTile.door)]
         doors = [Door(cell, self) for cell in door_tops]
 
         keys_positions = [(y, x)
-                          for y in range(Level.room_size[1])
-                          for x in range(Level.room_size[0])
-                          if room_data[y][x] == LevelTile.key]
+                          for y in range(Room.room_size[1])
+                          for x in range(Room.room_size[0])
+                          if room_data[y][x] == RoomTile.key]
         keys = [Key(cell, self) for cell in keys_positions]
 
         laser_door_tops = [(y, x)
-                           for y in range(Level.room_size[1])
-                           for x in range(Level.room_size[0])
-                           if room_data[y][x] == LevelTile.laser_door and (
-                                   y - 1 < 0 or room_data[y - 1][x] != LevelTile.laser_door)]
+                           for y in range(Room.room_size[1])
+                           for x in range(Room.room_size[0])
+                           if room_data[y][x] == RoomTile.laser_door and (
+                                   y - 1 < 0 or room_data[y - 1][x] != RoomTile.laser_door)]
         laser_doors = [LaserDoor(cell, self) for cell in laser_door_tops]
 
         disappearing_walls = [DisappearingWall((y, x), self)
-                              for y in range(Level.room_size[1])
-                              for x in range(Level.room_size[0])
-                              if room_data[y][x] == LevelTile.disappearing_wall]
+                              for y in range(Room.room_size[1])
+                              for x in range(Room.room_size[0])
+                              if room_data[y][x] == RoomTile.disappearing_wall]
 
         self.moving_parts = enemies + doors + keys + laser_doors + disappearing_walls
 
@@ -245,8 +245,8 @@ class Level:
 
     def _update_moving_state(self):
         moving_data = [[MovingObject.none
-                        for _ in range(Level.room_size[0])]
-                       for _ in range(Level.room_size[1])]
+                        for _ in range(Room.room_size[0])]
+                       for _ in range(Room.room_size[1])]
         for o in self.moving_parts:
             o.draw(moving_data)
         self.moving_data = moving_data
@@ -268,27 +268,27 @@ class Level:
     @staticmethod
     def is_inside(cell):
         y, x = cell
-        return 0 <= x < Level.room_size[0] and 0 <= y < Level.room_size[1]
+        return 0 <= x < Room.room_size[0] and 0 <= y < Room.room_size[1]
 
     def at(self, cell):
-        if not Level.is_inside(cell):
-            return LevelTile.wall
+        if not Room.is_inside(cell):
+            return RoomTile.wall
         return self.room_data[cell[0]][cell[1]]
 
     def at_moving(self, cell):
-        if not Level.is_inside(cell):
-            return LevelTile.empty
+        if not Room.is_inside(cell):
+            return RoomTile.empty
         return self.moving_data[cell[0]][cell[1]]
 
     def is_solid_at(self, cell):
-        return self.at(cell) in [LevelTile.wall, LevelTile.moving_sand] or self.at_moving(cell) in [MovingObject.door]
+        return self.at(cell) in [RoomTile.wall, RoomTile.moving_sand] or self.at_moving(cell) in [MovingObject.door]
 
 
 class Door:
     def __init__(self, top_position, room):
         y, x = top_position
         height = 1
-        while room.at((y + height, x)) == LevelTile.door:
+        while room.at((y + height, x)) == RoomTile.door:
             height += 1
 
         self.top_position = top_position
@@ -358,7 +358,7 @@ class LaserDoor:
     def __init__(self, top_position, room):
         y, x = top_position
         height = 1
-        while room.at((y + height, x)) == LevelTile.laser_door:
+        while room.at((y + height, x)) == RoomTile.laser_door:
             height += 1
 
         self.top_position = top_position
@@ -476,16 +476,16 @@ class Player:
         new_y, new_x = new_player_cell
 
         crashed = False
-        changed_level = False
-        if not self.environment.level.is_inside(new_player_cell):
-            changed_level = self.environment.try_changing_level(new_player_cell)
-            crashed = not changed_level
+        changed_room = False
+        if not self.environment.room.is_inside(new_player_cell):
+            changed_room = self.environment.try_changing_room(new_player_cell)
+            crashed = not changed_room
         elif not (new_x == x and new_y < y) and \
-                not self.environment.level.is_solid_at((y, x)) and \
-                self.environment.level.is_solid_at(new_player_cell):
+                not self.environment.room.is_solid_at((y, x)) and \
+                self.environment.room.is_solid_at(new_player_cell):
             crashed = True
 
-        if not crashed and not changed_level:
+        if not crashed and not changed_room:
             self.player_pos = new_player_pos
 
         if crashed:
@@ -495,11 +495,11 @@ class Player:
         player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
 
-        can_be_on_ladder = self.environment.level.at(player_cell) == LevelTile.ladder
-        can_stand = (not Level.is_inside(cell_bellow)) or \
-                    self.environment.level.at(cell_bellow) in [LevelTile.wall, LevelTile.moving_sand] or \
-                    (self.environment.level.at(cell_bellow) == LevelTile.ladder and not can_be_on_ladder) or \
-                    self.environment.level.at_moving(cell_bellow) in [MovingObject.disappearing_wall, MovingObject.door]
+        can_be_on_ladder = self.environment.room.at(player_cell) == RoomTile.ladder
+        can_stand = (not Room.is_inside(cell_bellow)) or \
+                    self.environment.room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or \
+                    (self.environment.room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder) or \
+                    self.environment.room.at_moving(cell_bellow) in [MovingObject.disappearing_wall, MovingObject.door]
 
         if self.player_state == PlayerState.flying:
             if can_be_on_ladder and not self.exiting_ladder:
@@ -563,14 +563,14 @@ class Player:
                     new_player_pos[0] += Env.ladder_speed
 
         if standing:
-            if self.environment.level.at(cell_bellow) == LevelTile.ladder and action == 'down':
+            if self.environment.room.at(cell_bellow) == RoomTile.ladder and action == 'down':
                 new_player_pos[0] += Env.ladder_speed
                 self.player_state = PlayerState.on_ladder
-            elif self.environment.level.at(player_cell) == LevelTile.ladder and action == 'up':
+            elif self.environment.room.at(player_cell) == RoomTile.ladder and action == 'up':
                 new_player_pos[0] -= Env.ladder_speed
                 self.player_state = PlayerState.on_ladder
 
-            if self.environment.level.at(cell_bellow) == LevelTile.moving_sand:
+            if self.environment.room.at(cell_bellow) == RoomTile.moving_sand:
                 new_player_pos[1] -= Env.moving_sand_speed
 
         return new_player_pos
@@ -583,9 +583,9 @@ class Player:
 class Enemy:
     _ticks_per_move = 2  # inverse of the speed of an enemy
 
-    def __init__(self, starting_cell, level):
+    def __init__(self, starting_cell, room):
         self.starting_cell = starting_cell
-        self.level = level
+        self.room = room
         # For documentation purposes, overridden in reset().
         self.enemy_cell, self.ticks_since_move, self.previous_cell = None, None, None
         self.reset()
@@ -610,7 +610,7 @@ class Enemy:
 
     def _move(self):
         path_neighbours = [c for c in neighbour_cells(self.enemy_cell) if
-                           self.level.at(c) == LevelTile.enemy_path or self.level.at(c) == LevelTile.enemy_start]
+                           self.room.at(c) == RoomTile.enemy_path or self.room.at(c) == RoomTile.enemy_start]
         assert len(path_neighbours) <= 2
         if len(path_neighbours) == 0:
             next_cell = self.enemy_cell  # stationary enemy
@@ -633,39 +633,39 @@ def neighbour_cells(cell):
     y, x = cell
     if y != 0:
         yield y - 1, x
-    if y != Level.room_size[1] - 1:
+    if y != Room.room_size[1] - 1:
         yield y + 1, x
     if x != 0:
         yield y, x - 1
-    if x != Level.room_size[0] - 1:
+    if x != Room.room_size[0] - 1:
         yield y, x + 1
 
 
-class LevelCache:
+class RoomCache:
     def __init__(self):
-        self.levels = dict()
+        self.rooms = dict()
 
-    def get_level(self, level_name):
-        if level_name not in self.levels:
-            self.levels[level_name] = LevelCache._load_level(level_name)
-        return self.levels[level_name]
+    def get_room(self, room_name):
+        if room_name not in self.rooms:
+            self.rooms[room_name] = RoomCache._load_room(room_name)
+        return self.rooms[room_name]
 
     @staticmethod
-    def _load_level(level_name):
-        file_name = _get_file_location(level_name + '.json')
-        with open(file_name, 'r') as level_file:
-            data = json.load(level_file)
-            room_data = LevelCache._load_level_data(_get_file_location(data['data_file']))
-            neighbours = {neighbour: data[neighbour] for neighbour in Level.neighbours_names if
+    def _load_room(room_name):
+        file_name = _get_file_location(room_name + '.json')
+        with open(file_name, 'r') as room_file:
+            data = json.load(room_file)
+            room_data = RoomCache._load_room_data(_get_file_location(data['data_file']))
+            neighbours = {neighbour: data[neighbour] for neighbour in Room.neighbours_names if
                           neighbour in data}
-            return Level(level_name, room_data, neighbours)
+            return Room(room_name, room_data, neighbours)
 
     @staticmethod
-    def _load_level_data(data_file):
+    def _load_room_data(data_file):
         assert data_file[-4:] == '.png'
         data_image = Image.open(data_file)
         data_pixels = data_image.load()
-        assert data_image.size == Level.room_size
+        assert data_image.size == Room.room_size
         w, h = data_image.size
         return [[_color_to_tile[data_pixels[x, y]] for x in range(w)] for y in range(h)]
 
@@ -683,7 +683,7 @@ class MovingObject(Enum):
     disappearing_wall = 5
 
 
-class LevelTile(Enum):
+class RoomTile(Enum):
     empty = 0
     wall = 1
     player_start = 2
@@ -700,10 +700,10 @@ class LevelTile(Enum):
 
 
 _tile_to_channel = {
-    LevelTile.wall: 'wall',
-    LevelTile.lava: 'lava',
-    LevelTile.ladder: 'ladder',
-    LevelTile.moving_sand: 'moving_sand'
+    RoomTile.wall: 'wall',
+    RoomTile.lava: 'lava',
+    RoomTile.ladder: 'ladder',
+    RoomTile.moving_sand: 'moving_sand'
 }
 
 
@@ -712,17 +712,17 @@ def _hex(hexcode):
 
 
 _color_to_tile = {
-    _hex(0xffffff): LevelTile.empty,
-    _hex(0x000000): LevelTile.wall,
-    _hex(0x00ff00): LevelTile.player_start,
-    _hex(0xff0000): LevelTile.lava,
-    _hex(0xffff00): LevelTile.ladder,
-    _hex(0x00ffff): LevelTile.enemy_path,
-    _hex(0x0000ff): LevelTile.enemy_start,
-    _hex(0xff00ff): LevelTile.moving_sand,
-    _hex(0xac6000): LevelTile.door,
-    _hex(0xac8f00): LevelTile.key,
-    _hex(0x584052): LevelTile.laser_door,
-    _hex(0x626262): LevelTile.disappearing_wall,
-    _hex(0xff9400): LevelTile.coin
+    _hex(0xffffff): RoomTile.empty,
+    _hex(0x000000): RoomTile.wall,
+    _hex(0x00ff00): RoomTile.player_start,
+    _hex(0xff0000): RoomTile.lava,
+    _hex(0xffff00): RoomTile.ladder,
+    _hex(0x00ffff): RoomTile.enemy_path,
+    _hex(0x0000ff): RoomTile.enemy_start,
+    _hex(0xff00ff): RoomTile.moving_sand,
+    _hex(0xac6000): RoomTile.door,
+    _hex(0xac8f00): RoomTile.key,
+    _hex(0x584052): RoomTile.laser_door,
+    _hex(0x626262): RoomTile.disappearing_wall,
+    _hex(0xff9400): RoomTile.coin
 }
