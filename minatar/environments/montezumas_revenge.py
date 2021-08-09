@@ -38,29 +38,51 @@ class Env:
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Room.room_size[0], Room.room_size[1] + 1)  # one row contains the HUD
         self.maze = Maze()
+        self.treasure_room = None
         self.player = Player()
         # For documentation purposes, overridden in reset().
-        self.screen_state, self.human_checkpoint = None, None
+        self.screen_state, self.human_checkpoint, self.game_state = None, None, None
         self.reset()
 
     def reset(self):
-        self.maze.reset()
+        self._reset_to_starting_point()
         self.player.reset(Env.cell_to_position(self.maze.soft_reset_position))
-        self.screen_state = self._create_state()
+        self.trigger_screen_state_redraw()
+
+    def _reset_to_starting_point(self):
+        self.game_state = GameState.in_maze
+        self.maze.reset()
+        self.player.soft_reset(Env.cell_to_position(self.maze.soft_reset_position))
+        self.trigger_screen_state_redraw()
 
     # Called after player loses one hearth.
     def _soft_reset(self):
         self.player.soft_reset(Env.cell_to_position(self.maze.soft_reset_position))
-        self.screen_state = self._create_state()
+        self.trigger_screen_state_redraw()
 
     def act(self, action_num):
-        player_died = self.maze.update(self.player, action_num)
-        if player_died:
-            if self.player.health == 0:
-                return 0, True  # player died
-            self.player.health -= 1
-            self._soft_reset()
-        self._update_state(self.screen_state)
+        if self.game_state == GameState.in_maze:
+            maze_event = self.maze.update(self.player, action_num)
+            if maze_event == MazeEvent.player_died:
+                if self.player.health == 0:
+                    return 0, True  # player died
+                self.player.health -= 1
+                self._soft_reset()
+            elif maze_event == MazeEvent.changed_room:
+                self.trigger_screen_state_redraw()
+            elif maze_event == MazeEvent.entered_treasure_room:
+                self.treasure_room = TreasureRoom()
+                self.game_state = GameState.in_treasure_room
+                self.trigger_screen_state_redraw()
+            else:
+                assert maze_event is None
+        elif self.game_state == GameState.in_treasure_room:
+            back_to_maze = self.treasure_room.update(self.player, action_num)
+            if back_to_maze:
+                self._reset_to_starting_point()
+        else:
+            assert False
+        self._update_screen_state(self.screen_state)
         return 0, False  # reward, terminated
 
     def state_shape(self):
@@ -69,26 +91,39 @@ class Env:
     def state(self):
         return self.screen_state
 
-    def _create_state(self):
-        # Initialize status bar.
-        screen_state = np.zeros(self.state_shape(), dtype=bool)
-        screen_state[0, :, self.channels['gauge_background']] = True
+    def trigger_screen_state_redraw(self):
+        self.screen_state = self._create_screen_state()
 
-        self.maze.initialize_screen_state(screen_state)
+    def _create_screen_state(self):
+        screen_state = np.zeros(self.state_shape(), dtype=bool)
+        if self.game_state == GameState.in_maze:
+            # Initialize status bar.
+            screen_state[0, :, self.channels['gauge_background']] = True
+            # Let the maze initialize the rest.
+            self.maze.initialize_screen_state(screen_state)
+        elif self.game_state == GameState.in_treasure_room:
+            self.treasure_room.initialize_screen_state(screen_state)
+        else:
+            assert False
         return screen_state
 
-    def _update_state(self, state):
-        # Update status bar.
-        width, height = self.screen_size
-        state[0, :, self.channels['gauge_health']] = False
-        state[0, 0:self.player.health, self.channels['gauge_health']] = True
-        state[0, :, self.channels['gauge_keys']] = False
-        state[0, width - self.player.key_count:width, self.channels['gauge_keys']] = True
+    def _update_screen_state(self, state):
+        if self.game_state == GameState.in_maze:
+            # Update status bar.
+            width, height = self.screen_size
+            state[0, :, self.channels['gauge_health']] = False
+            state[0, 0:self.player.health, self.channels['gauge_health']] = True
+            state[0, :, self.channels['gauge_keys']] = False
+            state[0, width - self.player.key_count:width, self.channels['gauge_keys']] = True
 
-        Player.reset_state(state)
-        self.player.add_to_state(state)
+            Player.reset_state(state)
+            self.player.add_to_state(state)
 
-        self.maze.update_screen_state(state)
+            self.maze.update_screen_state(state)
+        elif self.game_state == GameState.in_treasure_room:
+            self.treasure_room.update_screen_state(state)
+        else:
+            assert False
         return state
 
     @staticmethod
@@ -105,7 +140,7 @@ class Env:
 
     def _apply_checkpoint(self, checkpoint):
         self.maze.apply_checkpoint(checkpoint, self.player)
-        self.screen_state = self._create_state()
+        self.trigger_screen_state_redraw()
 
     def handle_human_action(self, action):
         action = action.lower()
@@ -114,6 +149,11 @@ class Env:
         elif action == 'l':  # load checkpoint
             if self.human_checkpoint is not None:
                 self._apply_checkpoint(self.human_checkpoint)
+
+
+class GameState(Enum):
+    in_maze = 0
+    in_treasure_room = 1
 
 
 class Maze:
@@ -139,12 +179,16 @@ class Maze:
     def update_screen_state(self, screen_state):
         self.room.update_screen_state(screen_state)
 
-    # Returns whether player has lost a life.
     def update(self, player, action_num):
         action = Env.action_map[action_num]
+        old_room = self.room
         player.update_inside_maze(action, self)
         self.room.update(player)
-        return player.dead or self._has_collided(player)
+        if player.dead or self._has_collided(player):
+            return MazeEvent.player_died
+        if old_room != self.room:
+            return MazeEvent.changed_room
+        return None
 
     def _has_collided(self, player):
         player_cell = Env.position_to_cell(player.player_pos)
@@ -205,6 +249,24 @@ class Maze:
 MazeCheckpoint = namedtuple('MazeCheckpoint',
                             ['room_name', 'soft_reset_position', 'player_pos', 'player_speed',
                              'player_state', 'exiting_ladder'])
+
+
+class MazeEvent(Enum):
+    player_died = 0
+    changed_room = 1
+    entered_treasure_room = 2
+
+
+class TreasureRoom:
+    # Returns whether the player's time in the treasure room has expired.
+    def update(self, player, action_num):
+        pass
+
+    def initialize_screen_state(self, screen_state):
+        pass
+
+    def update_screen_state(self, screen_state):
+        pass
 
 
 class PlayerState(Enum):
