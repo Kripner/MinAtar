@@ -37,44 +37,31 @@ class Env:
         self.channels = Env.channels
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Room.room_size[0], Room.room_size[1] + 1)  # one row contains the HUD
+        self.maze = Maze()
+        self.player = Player()
         # For documentation purposes, overridden in reset().
-        self.rooms, self.room, self.soft_reset_position, self.screen_state, self.human_checkpoint = \
-            None, None, None, None, None
-        self.player = Player(self)
+        self.screen_state, self.human_checkpoint = None, None
         self.reset()
 
     def reset(self):
-        self.rooms = RoomCache()
-        self._change_room(Env.initial_room)
-        assert self.room.player_start is not None, 'Initial room does not specify initial player position.'
-        self.soft_reset_position = self.room.player_start
-        self.player.reset()
+        self.maze.reset()
+        self.player.reset(Env.cell_to_position(self.maze.soft_reset_position))
         self.screen_state = self._create_state()
 
-    # called after player loses one hearth
+    # Called after player loses one hearth.
     def _soft_reset(self):
-        self.player.soft_reset()
+        self.player.soft_reset(Env.cell_to_position(self.maze.soft_reset_position))
         self.screen_state = self._create_state()
 
     def act(self, action_num):
-        action = Env.action_map[action_num]
-        self.player.update(action)
-        self.room.update(self.player)
-        if self.player.dead or self._has_collided():
+        player_died = self.maze.update(self.player, action_num)
+        if player_died:
             if self.player.health == 0:
-                self._update_state(self.screen_state)  # get the last frame
                 return 0, True  # player died
             self.player.health -= 1
             self._soft_reset()
         self._update_state(self.screen_state)
         return 0, False  # reward, terminated
-
-    def _has_collided(self):
-        player_cell = Env.position_to_cell(self.player.player_pos)
-        if self.room.at(player_cell) == RoomTile.lava:
-            return True
-        if self.room.at_moving(player_cell) == MovingObject.enemy:
-            return True
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
@@ -83,30 +70,91 @@ class Env:
         return self.screen_state
 
     def _create_state(self):
+        # Initialize status bar.
         screen_state = np.zeros(self.state_shape(), dtype=bool)
         screen_state[0, :, self.channels['gauge_background']] = True
-        lvl = self.room.room_data
-        for y in range(Room.room_size[1]):
-            for x in range(Room.room_size[0]):
-                tile = lvl[y][x]
-                if tile in _tile_to_channel:
-                    screen_state[y + 1, x, self.channels[_tile_to_channel[tile]]] = True
+
+        self.maze.initialize_screen_state(screen_state)
         return screen_state
 
     def _update_state(self, state):
-        Player.reset_state(state)
-        self.player.add_to_state(state)
-
+        # Update status bar.
         width, height = self.screen_size
         state[0, :, self.channels['gauge_health']] = False
         state[0, 0:self.player.health, self.channels['gauge_health']] = True
         state[0, :, self.channels['gauge_keys']] = False
         state[0, width - self.player.key_count:width, self.channels['gauge_keys']] = True
 
-        self.room.update_state(state)
+        Player.reset_state(state)
+        self.player.add_to_state(state)
+
+        self.maze.update_screen_state(state)
         return state
 
-    def try_changing_room(self, new_player_cell):
+    @staticmethod
+    def position_to_cell(position):
+        y, x = position
+        return math.floor(y), math.floor(x)
+
+    @staticmethod
+    def cell_to_position(cell):
+        return cell
+
+    def _get_checkpoint(self):
+        return self.maze.get_checkpoint(self.player)
+
+    def _apply_checkpoint(self, checkpoint):
+        self.maze.apply_checkpoint(checkpoint, self.player)
+        self.screen_state = self._create_state()
+
+    def handle_human_action(self, action):
+        action = action.lower()
+        if action == 's':  # save checkpoint
+            self.human_checkpoint = self._get_checkpoint()
+        elif action == 'l':  # load checkpoint
+            if self.human_checkpoint is not None:
+                self._apply_checkpoint(self.human_checkpoint)
+
+
+class Maze:
+    def __init__(self):
+        # For documentation purposes, overridden in reset().
+        self.rooms, self.room, self.soft_reset_position, = \
+            None, None, None
+        self.reset()
+
+    def reset(self):
+        self.rooms = RoomCache()
+        self._change_room(Env.initial_room)
+        assert self.room.player_start is not None, 'Initial room does not specify initial player position.'
+        self.soft_reset_position = self.room.player_start
+
+    def initialize_screen_state(self, screen_state):
+        for y in range(Room.room_size[1]):
+            for x in range(Room.room_size[0]):
+                tile = self.room.room_data[y][x]
+                if tile in _tile_to_channel:
+                    screen_state[y + 1, x, Env.channels[_tile_to_channel[tile]]] = True
+
+    def update_screen_state(self, screen_state):
+        self.room.update_screen_state(screen_state)
+
+    # Returns whether player has lost a life.
+    def update(self, player, action_num):
+        action = Env.action_map[action_num]
+        player.update_inside_maze(action, self)
+        self.room.update(player)
+        return player.dead or self._has_collided(player)
+
+    def _has_collided(self, player):
+        player_cell = Env.position_to_cell(player.player_pos)
+        if self.room.at(player_cell) == RoomTile.lava:
+            return True
+        if self.room.at_moving(player_cell) == MovingObject.enemy:
+            return True
+        return False
+
+    def try_changing_room(self, player, new_player_cell):
         y, x = new_player_cell
         next_neighbour = None
         next_location = None
@@ -125,58 +173,38 @@ class Env:
 
         if next_neighbour in self.room.neighbours:
             self._change_room(self.room.neighbours[next_neighbour])
-            self._jump_to_cell(next_location)
+            player.player_pos = Env.cell_to_position(next_location)
             self.soft_reset_position = next_location
-            self.screen_state = self._create_state()
             return True
         return False
 
     def _change_room(self, lvl_name):
         self.room = self.rooms.get_room(lvl_name)
 
-    def _jump_to_cell(self, cell):
-        self.player.player_pos = Env.cell_to_position(cell)
-
-    @staticmethod
-    def position_to_cell(position):
-        y, x = position
-        return math.floor(y), math.floor(x)
-
-    @staticmethod
-    def cell_to_position(cell):
-        return cell
-
-    def _get_checkpoint(self):
-        return Checkpoint(
+    # TODO: PlayerCheckpoint, remove the argument
+    def get_checkpoint(self, player):
+        return MazeCheckpoint(
             room_name=self.room.room_name,
             soft_reset_position=self.soft_reset_position,
-            player_pos=self.player.player_pos,
-            player_speed=self.player.player_speed,
-            player_state=self.player.player_state,
-            exiting_ladder=self.player.exiting_ladder
+            player_pos=player.player_pos,
+            player_speed=player.player_speed,
+            player_state=player.player_state,
+            exiting_ladder=player.exiting_ladder
         )
 
-    def _apply_checkpoint(self, checkpoint):
+    # TODO: PlayerCheckpoint, remove the argument
+    def apply_checkpoint(self, checkpoint, player):
         self._change_room(checkpoint.room_name)
         self.soft_reset_position = checkpoint.soft_reset_position
-        self.player.player_pos = checkpoint.player_pos
-        self.player.player_speed = checkpoint.player_speed
-        self.player.player_state = checkpoint.player_state
-        self.player.exiting_ladder = checkpoint.exiting_ladder
-        self.screen_state = self._create_state()
-
-    def handle_human_action(self, action):
-        action = action.lower()
-        if action == 's':  # save checkpoint
-            self.human_checkpoint = self._get_checkpoint()
-        elif action == 'l':  # load checkpoint
-            if self.human_checkpoint is not None:
-                self._apply_checkpoint(self.human_checkpoint)
+        player.player_pos = checkpoint.player_pos
+        player.player_speed = checkpoint.player_speed
+        player.player_state = checkpoint.player_state
+        player.exiting_ladder = checkpoint.exiting_ladder
 
 
-Checkpoint = namedtuple('Checkpoint',
-                        ['room_name', 'soft_reset_position', 'player_pos', 'player_speed',
-                         'player_state', 'exiting_ladder'])
+MazeCheckpoint = namedtuple('MazeCheckpoint',
+                            ['room_name', 'soft_reset_position', 'player_pos', 'player_speed',
+                             'player_state', 'exiting_ladder'])
 
 
 class PlayerState(Enum):
@@ -251,7 +279,7 @@ class Room:
             o.draw(moving_data)
         self.moving_data = moving_data
 
-    def update_state(self, state):
+    def update_screen_state(self, state):
         Enemy.reset_state(state)
         Door.reset_state(state)
         Key.reset_state(state)
@@ -436,20 +464,19 @@ class DisappearingWall:
 class Player:
     _max_hearths = 5
 
-    def __init__(self, environment):
-        self.environment = environment
+    def __init__(self):
         # For documentation purposes, overridden in reset().
         self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, self.key_count = \
             None, None, None, None, None, None, None
 
-    def reset(self):
-        self.soft_reset()
+    def reset(self, position):
+        self.soft_reset(position)
         self.health = Player._max_hearths
         self.key_count = 5  # TODO: change
 
     # called after player loses one hearth
-    def soft_reset(self):
-        self.player_pos = Env.cell_to_position(self.environment.soft_reset_position)
+    def soft_reset(self, position):
+        self.player_pos = position
         self.player_speed = np.array([0, 0], dtype=np.float32)
         self.player_state = PlayerState.standing
         self.exiting_ladder = False
@@ -469,20 +496,21 @@ class Player:
         player_cell = Env.position_to_cell(self.player_pos)
         state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
 
-    def update(self, action):
+    def update_inside_maze(self, action, maze):
+        curr_room = maze.room
         y, x = self.get_player_cell()
-        new_player_pos = self._calculate_new_position(action)
+        new_player_pos = self._calculate_new_position(action, curr_room)
         new_player_cell = Env.position_to_cell(new_player_pos)
         new_y, new_x = new_player_cell
 
         crashed = False
         changed_room = False
-        if not self.environment.room.is_inside(new_player_cell):
-            changed_room = self.environment.try_changing_room(new_player_cell)
+        if not curr_room.is_inside(new_player_cell):
+            changed_room = maze.try_changing_room(self, new_player_cell)
             crashed = not changed_room
         elif not (new_x == x and new_y < y) and \
-                not self.environment.room.is_solid_at((y, x)) and \
-                self.environment.room.is_solid_at(new_player_cell):
+                not curr_room.is_solid_at((y, x)) and \
+                curr_room.is_solid_at(new_player_cell):
             crashed = True
 
         if not crashed and not changed_room:
@@ -491,15 +519,15 @@ class Player:
         if crashed:
             self.player_speed = np.array([0, 0], dtype=np.float32)
 
-    def _get_new_player_state(self):
+    def _get_new_player_state(self, room):
         player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
 
-        can_be_on_ladder = self.environment.room.at(player_cell) == RoomTile.ladder
+        can_be_on_ladder = room.at(player_cell) == RoomTile.ladder
         can_stand = (not Room.is_inside(cell_bellow)) or \
-                    self.environment.room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or \
-                    (self.environment.room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder) or \
-                    self.environment.room.at_moving(cell_bellow) in [MovingObject.disappearing_wall, MovingObject.door]
+                    room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or \
+                    (room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder) or \
+                    room.at_moving(cell_bellow) in [MovingObject.disappearing_wall, MovingObject.door]
 
         if self.player_state == PlayerState.flying:
             if can_be_on_ladder and not self.exiting_ladder:
@@ -519,10 +547,10 @@ class Player:
         return self.player_state
 
     # Calculates new position of the player not counting in collisions.
-    def _calculate_new_position(self, action):
+    def _calculate_new_position(self, action, room):
         # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
         # player was a single point.
-        self.player_state = self._get_new_player_state()
+        self.player_state = self._get_new_player_state(room)
         player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
         standing, on_ladder, flying = self._one_hot_state()
@@ -563,14 +591,14 @@ class Player:
                     new_player_pos[0] += Env.ladder_speed
 
         if standing:
-            if self.environment.room.at(cell_bellow) == RoomTile.ladder and action == 'down':
+            if room.at(cell_bellow) == RoomTile.ladder and action == 'down':
                 new_player_pos[0] += Env.ladder_speed
                 self.player_state = PlayerState.on_ladder
-            elif self.environment.room.at(player_cell) == RoomTile.ladder and action == 'up':
+            elif room.at(player_cell) == RoomTile.ladder and action == 'up':
                 new_player_pos[0] -= Env.ladder_speed
                 self.player_state = PlayerState.on_ladder
 
-            if self.environment.room.at(cell_bellow) == RoomTile.moving_sand:
+            if room.at(cell_bellow) == RoomTile.moving_sand:
                 new_player_pos[1] -= Env.moving_sand_speed
 
         return new_player_pos
