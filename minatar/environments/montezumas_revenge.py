@@ -22,7 +22,8 @@ class Env:
         'ladder': 10,
         'player': 11,
         'enemy': 12,
-        'key': 13
+        'key': 13,
+        'coin': 14
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -33,6 +34,7 @@ class Env:
     jump_force = 1
     initial_room = 'room-2'  # TODO: change
     treasure_room_walk_speed = 1
+    score_per_coin = 1000
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -43,13 +45,14 @@ class Env:
         self.treasure_room = None
         self.player = Player()
         # For documentation purposes, overridden in reset().
-        self.screen_state, self.human_checkpoint, self.game_state = None, None, None
+        self.last_score, self.screen_state, self.human_checkpoint, self.game_state = None, None, None, None
         self.reset()
 
     def reset(self):
         self._reset_to_starting_point()
         self.player.reset(Env.cell_to_position(self.maze.soft_reset_position))
         self.trigger_screen_state_redraw()
+        self.last_score = self.player.score
 
     def _reset_to_starting_point(self):
         self.game_state = GameState.in_maze
@@ -68,13 +71,13 @@ class Env:
             maze_event = self.maze.update(self.player, action)
             if maze_event == MazeEvent.player_died:
                 if self.player.health == 0:
-                    return 0, True  # player died
+                    return self._get_reward(), True  # player died
                 self.player.health -= 1
                 self._soft_reset()
             elif maze_event == MazeEvent.changed_room:
                 self.trigger_screen_state_redraw()
             elif maze_event == MazeEvent.entered_treasure_room:
-                self.treasure_room = TreasureRoom()
+                self.treasure_room = TreasureRoom(self.random)
                 self.game_state = GameState.in_treasure_room
                 self.trigger_screen_state_redraw()
             else:
@@ -86,7 +89,12 @@ class Env:
         else:
             assert False
         self._update_screen_state(self.screen_state)
-        return 0, False  # reward, terminated
+        return self._get_reward(), False  # reward, terminated
+
+    def _get_reward(self):
+        reward = self.player.score - self.last_score
+        self.last_score = self.player.score
+        return reward
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
@@ -111,8 +119,8 @@ class Env:
         return screen_state
 
     def _update_screen_state(self, state):
-        Player.reset_state(state)
-        self.player.add_to_state(state)
+        state[:, :, Env.channels['player']] = False
+        player_cell = Env.position_to_cell(self.player.player_pos)
 
         if self.game_state == GameState.in_maze:
             # Update status bar.
@@ -122,8 +130,11 @@ class Env:
             state[0, :, Env.channels['gauge_keys']] = False
             state[0, width - self.player.key_count:width, Env.channels['gauge_keys']] = True
 
+            state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
+
             self.maze.update_screen_state(state)
         elif self.game_state == GameState.in_treasure_room:
+            state[player_cell[0], player_cell[1], Env.channels['player']] = True
             self.treasure_room.update_screen_state(state)
         else:
             assert False
@@ -267,10 +278,13 @@ class MazeEvent(Enum):
 
 
 class TreasureRoom:
-    ticks_before_ending = 20
+    ticks_before_ending = 100
 
-    def __init__(self):
+    def __init__(self, random):
+        self.random = random
         self.ticks_since_start = 0
+        self.coin_cell = None
+        self._randomize_coin_position()
 
     # Returns whether the player's time in the treasure room has expired.
     def update(self, player, action):
@@ -278,14 +292,24 @@ class TreasureRoom:
         if self.ticks_since_start == TreasureRoom.ticks_before_ending:
             return True
         player.update_inside_treasure_room(action)
+        player_cell = player.get_player_cell()
+        if player_cell == self.coin_cell:
+            player.score += Env.score_per_coin
+            while player_cell == self.coin_cell:
+                self._randomize_coin_position()
 
         return False
+
+    def _randomize_coin_position(self):
+        self.coin_cell = (self.random.randint(0, Room.room_size[1] - 1),
+                          self.random.randint(0, Room.room_size[0] - 1))
 
     def initialize_screen_state(self, screen_state):
         screen_state[0, :, Env.channels['treasure_room_background']] = True
 
     def update_screen_state(self, screen_state):
-        pass
+        screen_state[:, :, Env.channels['coin']] = False
+        screen_state[self.coin_cell[0], self.coin_cell[1], Env.channels['coin']] = True
 
 
 class PlayerState(Enum):
@@ -546,14 +570,15 @@ class Player:
     _max_hearths = 5
 
     def __init__(self):
-        # For documentation purposes, overridden in reset().
-        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, self.key_count = \
-            None, None, None, None, None, None, None
+        # For documentation purposes, overridden in reset() (which is called by the environment).
+        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, self.key_count, self.score = \
+            None, None, None, None, None, None, None, None
 
     def reset(self, position):
         self.soft_reset(position)
         self.health = Player._max_hearths
-        self.key_count = 5  # TODO: change
+        self.key_count = 5  # TODO: change to 0
+        self.score = 0
 
     # called after player loses one hearth
     def soft_reset(self, position):
@@ -568,14 +593,6 @@ class Player:
 
     def die(self):
         self.dead = True
-
-    @staticmethod
-    def reset_state(state):
-        state[:, :, Env.channels['player']] = False
-
-    def add_to_state(self, state):
-        player_cell = Env.position_to_cell(self.player_pos)
-        state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
 
     def update_inside_treasure_room(self, action):
         new_player_pos = self.player_pos
