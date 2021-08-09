@@ -1,0 +1,6 @@
+{
+"data_file": "room-35.png",
+"left_neighbour": "room-34",
+"right_neighbour": "room-36",
+"bottom_neighbour": "room-25"
+}
