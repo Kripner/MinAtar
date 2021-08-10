@@ -369,6 +369,12 @@ class Room:
                           if room_data[y][x] == RoomTile.key]
         keys = [Key(cell, self) for cell in keys_positions]
 
+        coins_positions = [(y, x)
+                           for y in range(Room.room_size[1])
+                           for x in range(Room.room_size[0])
+                           if room_data[y][x] == RoomTile.coin]
+        coins = [Coin(cell, self) for cell in coins_positions]
+
         laser_door_tops = [(y, x)
                            for y in range(Room.room_size[1])
                            for x in range(Room.room_size[0])
@@ -381,7 +387,7 @@ class Room:
                               for x in range(Room.room_size[0])
                               if room_data[y][x] == RoomTile.disappearing_wall]
 
-        self.moving_parts = enemies + doors + keys + laser_doors + disappearing_walls
+        self.moving_parts = enemies + doors + keys + laser_doors + disappearing_walls + coins
 
         # Just for documentation, overridden in _update_moving_state.
         self.moving_data = None
@@ -406,6 +412,7 @@ class Room:
         Key.reset_state(state)
         LaserDoor.reset_state(state)
         DisappearingWall.reset_state(state)
+        Coin.reset_state(state)
 
         for o in self.moving_parts:
             o.add_to_state(state)
@@ -498,6 +505,35 @@ class Key:
         if player.get_player_cell() == self.position:
             self.collected = True
             player.key_count += 1
+
+
+class Coin:
+    def __init__(self, position, room):
+        self.position = position
+        self.collected = False
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['coin']] = False
+
+    def add_to_state(self, state):
+        if self.collected:
+            return
+        y, x = self.position
+        state[y + 1, x, Env.channels['coin']] = True
+
+    def draw(self, moving_data):
+        if self.collected:
+            return
+        y, x = self.position
+        moving_data[y][x] = MovingObject.coin
+
+    def update(self, player):
+        if self.collected:
+            return
+        if player.get_player_cell() == self.position:
+            self.collected = True
+            player.score += 1000
 
 
 class LaserDoor:
@@ -842,6 +878,7 @@ class MovingObject(Enum):
     key = 3
     laser_door = 4
     disappearing_wall = 5
+    coin = 6
 
 
 class RoomTile(Enum):
