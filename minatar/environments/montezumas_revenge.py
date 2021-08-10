@@ -28,11 +28,11 @@ class Env:
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
     lateral_jumping_speed = 0.5
-    ladder_speed = 0.5
+    ladder_speed = 0.8
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 1
-    initial_room = 'room-2'  # TODO: change
+    initial_room = 'room-35'  # TODO: change
     treasure_room_walk_speed = 1
     score_per_coin = 1000
 
@@ -41,7 +41,8 @@ class Env:
         self.channels = Env.channels
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Room.room_size[0], Room.room_size[1] + 1)  # one row contains the HUD
-        self.maze = Maze()
+        self.ignored_until_released = []
+        self.maze = Maze(self)
         self.treasure_room = None
         self.player = Player()
         # For documentation purposes, overridden in reset().
@@ -66,7 +67,7 @@ class Env:
         self.trigger_screen_state_redraw()
 
     def act(self, action_num):
-        action = Env.action_map[action_num]
+        action = self._get_action(action_num)
         if self.game_state == GameState.in_maze:
             maze_event = self.maze.update(self.player, action)
             if maze_event == MazeEvent.player_died:
@@ -90,6 +91,15 @@ class Env:
             assert False
         self._update_screen_state(self.screen_state)
         return self._get_reward(), False  # reward, terminated
+
+    def _get_action(self, action_num):
+        action = Env.action_map[action_num]
+        if action in self.ignored_until_released:
+            self.ignored_until_released = [action]
+            return 'nop'
+        else:
+            self.ignored_until_released = []
+            return action
 
     def _get_reward(self):
         reward = self.player.score - self.last_score
@@ -164,6 +174,11 @@ class Env:
             if self.human_checkpoint is not None:
                 self._apply_checkpoint(self.human_checkpoint)
 
+    def ignore_until_released(self, *actions):
+        for action in actions:
+            if action not in self.ignored_until_released:
+                self.ignored_until_released.append(action)
+
 
 class GameState(Enum):
     in_maze = 0
@@ -171,7 +186,8 @@ class GameState(Enum):
 
 
 class Maze:
-    def __init__(self):
+    def __init__(self, environment):
+        self.environment = environment
         # For documentation purposes, overridden in reset().
         self.rooms, self.room, self.soft_reset_position, = \
             None, None, None
@@ -611,7 +627,7 @@ class Player:
     def update_inside_maze(self, action, maze):
         curr_room = maze.room
         y, x = self.get_player_cell()
-        new_player_pos = self._calculate_new_position(action, curr_room)
+        new_player_pos = self._calculate_new_position(action, maze)
         new_player_cell = Env.position_to_cell(new_player_pos)
         new_y, new_x = new_player_cell
 
@@ -631,18 +647,20 @@ class Player:
         if crashed:
             self.player_speed = np.array([0, 0], dtype=np.float32)
 
-    def _get_new_player_state(self, room):
+    def _get_new_player_state(self, maze):
+        curr_room = maze.room
         player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
 
-        can_be_on_ladder = room.at(player_cell) == RoomTile.ladder
+        can_be_on_ladder = curr_room.at(player_cell) == RoomTile.ladder
         can_stand = (not Room.is_inside(cell_bellow)) or \
-                    room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or \
-                    (room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder) or \
-                    room.at_moving(cell_bellow) in [MovingObject.disappearing_wall, MovingObject.door]
+                    curr_room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or \
+                    (curr_room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder) or \
+                    curr_room.at_moving(cell_bellow) in [MovingObject.disappearing_wall, MovingObject.door]
 
         if self.player_state == PlayerState.flying:
             if can_be_on_ladder and not self.exiting_ladder:
+                maze.environment.ignore_until_released('left', 'right', 'jump')
                 return PlayerState.on_ladder
             if can_stand:
                 return PlayerState.standing
@@ -659,13 +677,16 @@ class Player:
         return self.player_state
 
     # Calculates new position of the player not counting in collisions.
-    def _calculate_new_position(self, action, room):
+    def _calculate_new_position(self, action, maze):
         # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
         # player was a single point.
-        self.player_state = self._get_new_player_state(room)
+        self.player_state = self._get_new_player_state(maze)
+        if action in maze.environment.ignored_until_released:
+            action = 'nop'
         player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
         standing, on_ladder, flying = self._one_hot_state()
+        curr_room = maze.room
 
         ladder_exiting_action = False
         if standing or on_ladder:
@@ -703,14 +724,14 @@ class Player:
                     new_player_pos[0] += Env.ladder_speed
 
         if standing:
-            if room.at(cell_bellow) == RoomTile.ladder and action == 'down':
+            if curr_room.at(cell_bellow) == RoomTile.ladder and action == 'down':
                 new_player_pos[0] += Env.ladder_speed
                 self.player_state = PlayerState.on_ladder
-            elif room.at(player_cell) == RoomTile.ladder and action == 'up':
+            elif curr_room.at(player_cell) == RoomTile.ladder and action == 'up':
                 new_player_pos[0] -= Env.ladder_speed
                 self.player_state = PlayerState.on_ladder
 
-            if room.at(cell_bellow) == RoomTile.moving_sand:
+            if curr_room.at(cell_bellow) == RoomTile.moving_sand:
                 new_player_pos[1] -= Env.moving_sand_speed
 
         return new_player_pos
