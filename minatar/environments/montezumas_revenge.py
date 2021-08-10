@@ -32,7 +32,7 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 1
-    initial_room = 'room-35'  # TODO: change
+    initial_room = 'room-12'  # TODO: change
     treasure_room_walk_speed = 1
     score_per_coin = 1000
 
@@ -629,7 +629,7 @@ class Player:
     def reset(self, position):
         self.soft_reset(position)
         self.health = Player._max_hearths
-        self.key_count = 5  # TODO: change to 0
+        self.key_count = 0  # TODO: change to 0
         self.score = 0
 
     # called after player loses one hearth
