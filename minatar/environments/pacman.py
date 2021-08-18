@@ -5,6 +5,88 @@ import json
 from PIL import Image
 
 
+class LevelTile(Enum):
+    empty = 0
+    left_right = 1
+    up_down = 2
+    down_right = 3
+    up_right = 4
+    left_up = 5
+    left_down = 6
+    left_up_right = 7
+    up_right_down = 8
+    right_down_left = 9
+    down_left_up = 10
+    left_up_right_down = 11
+
+
+class Direction(Enum):
+    left = 0,
+    up = 1,
+    right = 2,
+    down = 3
+
+
+def _step_in_direction(cell, direction):
+    row, col = cell
+    if direction == Direction.left:
+        return row, col - 1
+    if direction == Direction.up:
+        return row - 1, col
+    if direction == Direction.right:
+        return row, col + 1
+    if direction == Direction.down:
+        return row + 1, col
+    assert False
+
+
+_tile_directions = {
+    LevelTile.left_right: [Direction.left, Direction.right],
+    LevelTile.up_down: [Direction.up, Direction.down],
+    LevelTile.down_right: [Direction.down, Direction.right],
+    LevelTile.up_right: [Direction.up, Direction.right],
+    LevelTile.left_up: [Direction.left, Direction.up],
+    LevelTile.left_down: [Direction.left, Direction.down],
+    LevelTile.left_up_right: [Direction.left, Direction.up, Direction.right],
+    LevelTile.up_right_down: [Direction.up, Direction.right, Direction.down],
+    LevelTile.right_down_left: [Direction.right, Direction.down, Direction.left],
+    LevelTile.down_left_up: [Direction.down, Direction.left, Direction.up],
+    LevelTile.left_up_right_down: [Direction.left, Direction.up, Direction.right, Direction.down],
+}
+
+
+class WalkingEntity:
+    def __init__(self, level, start_cell, ticks_per_move=4, start_direction=Direction.right):
+        self.level, self.cell = level, start_cell
+        self.ticks_since_moved = 0
+        self.ticks_per_move = ticks_per_move
+        self.direction = start_direction
+
+    def update(self):
+        if self.ticks_since_moved < self.ticks_per_move:
+            self.ticks_since_moved += 1
+        curr_tile = self.level.at(self.cell)
+        if self.ticks_since_moved == self.ticks_per_move and self.direction in _tile_directions[curr_tile]:
+            new_cell = _step_in_direction(self.cell, self.direction)
+            new_cell_wrapped = WalkingEntity._wrap_cell_around(new_cell)
+            if self.level.at(new_cell_wrapped) != LevelTile.empty:
+                self.ticks_since_moved = 0
+                self.cell = new_cell_wrapped
+
+    @staticmethod
+    def _wrap_cell_around(cell):
+        row, col = cell
+        if row < 0:
+            return Level.level_size[0] - 1, col
+        if row == Level.level_size[0]:
+            return 0, col
+        if col < 0:
+            return row, Level.level_size[1] - 1
+        if col == Level.level_size[1]:
+            return row, 0
+        return cell
+
+
 class Enemy:
     def __init__(self, environment, start_cell):
         self.env = environment
@@ -21,6 +103,9 @@ class Level:
         for col in range(Level.level_size[1]):
             for row in range(Level.level_size[0]):
                 state[row, col, Env.tile_to_channel[self.layout[row][col]]] = True
+
+    def at(self, cell):
+        return self.layout[cell[0]][cell[1]]
 
     @staticmethod
     def load_level(level_name):
@@ -53,21 +138,6 @@ def _get_file_location(file_name):
     return os.path.join('data', 'pacman', file_name)
 
 
-class LevelTile(Enum):
-    empty = 0
-    left_right = 1
-    up_down = 2
-    down_right = 3
-    up_right = 4
-    left_up = 5
-    left_down = 6
-    left_up_right = 7
-    up_right_down = 8
-    right_down_left = 9
-    down_left_up = 10
-    left_up_right_down = 11
-
-
 class Env:
     channels = {
         'empty': 0,
@@ -97,19 +167,21 @@ class Env:
         self.screen_size = (Level.level_size[0] + 1, Level.level_size[1])  # 1 row for the HUD
         self.level = Level.load_level(Env.level_name)
         # Just for documentation, overridden in reset().
-        self.screen_state, self.player_cell, self.enemies = None, None, None
+        self.screen_state, self.player, self.player_pos_inside_cell, self.enemies = None, None, None, None
         self.reset()
 
     def reset(self):
-        self.player_cell = self.level.player_start
+        self.player = WalkingEntity(self.level, self.level.player_start)
         self.enemies = []
         for enemy_start in self.level.enemies_starts:
             self.enemies.append(Enemy(self, enemy_start))
         self.screen_state = self._create_screen_state()
 
     def act(self, action_num):
-        # TODO
-        # return (reward, terminated?)
+        action = Env.action_map[action_num]
+
+        self.player.update()
+        self._update_screen_state(self.screen_state)
         return 0, False
 
     def state_shape(self):
@@ -129,7 +201,7 @@ class Env:
         screen_state[:, :, Env.channels['player']] = False
         screen_state[:, :, Env.channels['enemy']] = False
 
-        screen_state[self.player_cell[0], self.player_cell[1], Env.channels['player']] = True
+        screen_state[self.player.cell[0], self.player.cell[1], Env.channels['player']] = True
         for enemy in self.enemies:
             screen_state[enemy.enemy_cell[0], enemy.enemy_cell[1], Env.channels['enemy']] = True
 
