@@ -5,48 +5,10 @@ import json
 from PIL import Image
 
 
-class Env:
-    channels = {
-    }
-    action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
-    level_name = 'level'
-
-    # This signature is required by the Environment class, although ramping is not used here.
-    def __init__(self, ramping=None, random_state=None):
-        self.channels = Env.channels
-        self.random = np.random.RandomState() if random_state is None else random_state
-        self.screen_size = Level.level_size
-        self.screen_state = None
-        self.level = Level.load_level(Env.level_name)
-        self.reset()
-
-    def reset(self):
-        pass
-        # TODO
-
-    def act(self, action_num):
-        # TODO
-        # return (reward, terminated?)
-        return 0, False
-
-    def state_shape(self):
-        return *self.screen_size, len(self.channels)
-
-    def state(self):
-        return self.screen_state
-
-    def _create_screen_state(self):
-        screen_state = np.zeros(self.state_shape(), dtype=bool)
-        # TODO
-        # screen_state[0, :, Env.channels['gauge_background']] = True
-        return screen_state
-
-    def _update_screen_state(self, state):
-        pass
-        # TODO
-
-    def handle_human_action(self, action):
-        pass
+class Enemy:
+    def __init__(self, environment, start_cell):
+        self.env = environment
+        self.enemy_cell = start_cell
 
 
 class Level:
@@ -54,6 +16,11 @@ class Level:
 
     def __init__(self, layout, enemies_starts, player_start):
         self.layout, self.enemies_starts, self.player_start = layout, enemies_starts, player_start
+
+    def initialize_state(self, state):
+        for col in range(Level.level_size[0]):
+            for row in range(Level.level_size[1]):
+                state[col, row, Env.tile_to_channel[self.layout[row][col]]] = True
 
     @staticmethod
     def load_level(level_name):
@@ -101,9 +68,74 @@ class LevelTile(Enum):
     left_up_right_down = 11
 
 
-# _tile_to_channel = {
-#     LevelTile.empty: 'wall',
-# }
+class Env:
+    channels = {
+        'empty': 0,
+        'left_right': 1,
+        'up_down': 2,
+        'down_right': 3,
+        'up_right': 4,
+        'left_up': 5,
+        'left_down': 6,
+        'left_up_right': 7,
+        'up_right_down': 8,
+        'right_down_left': 9,
+        'down_left_up': 10,
+        'left_up_right_down': 11,
+        'gauge_background': 12
+    }
+    tile_to_channel = {}
+    action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
+    level_name = 'level'
+
+    # This signature is required by the Environment class, although ramping is not used here.
+    def __init__(self, ramping=None, random_state=None):
+        self.channels = Env.channels
+        self.random = np.random.RandomState() if random_state is None else random_state
+        self.screen_size = (Level.level_size[0], Level.level_size[1] + 1)  # 1 row for the HUD
+        self.level = Level.load_level(Env.level_name)
+        # Just for documentation, overridden in reset().
+        self.screen_state, self.player_cell, self.enemies = None, None, None
+        self.reset()
+
+    def reset(self):
+        self.player_cell = self.level.player_start
+        self.enemies = []
+        for enemy_start in self.level.enemies_starts:
+            self.enemies.append(Enemy(self, enemy_start))
+        self.screen_state = self._create_screen_state()
+
+    def act(self, action_num):
+        # TODO
+        # return (reward, terminated?)
+        return 0, False
+
+    def state_shape(self):
+        return *self.screen_size, len(self.channels)
+
+    def state(self):
+        return self.screen_state
+
+    def _create_screen_state(self):
+        screen_state = np.zeros(self.state_shape(), dtype=bool)
+        self.level.initialize_state(screen_state[:, 1:, :])
+        screen_state[0, :, Env.channels['gauge_background']] = True
+        return screen_state
+
+    def _update_screen_state(self, state):
+        pass
+
+    def handle_human_action(self, action):
+        pass
+
+    @staticmethod
+    def initialize_tile_to_channel():
+        Env.tile_to_channel = {}
+        for tile in LevelTile:
+            Env.tile_to_channel[tile] = Env.channels[tile.name]
+
+
+Env.initialize_tile_to_channel()
 
 
 def _hex(hexcode):
