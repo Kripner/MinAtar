@@ -12,15 +12,15 @@ class Enemy:
 
 
 class Level:
-    level_size = (20, 13)  # width, height
+    level_size = (13, 20)  # height, width
 
     def __init__(self, layout, enemies_starts, player_start):
         self.layout, self.enemies_starts, self.player_start = layout, enemies_starts, player_start
 
     def initialize_state(self, state):
-        for col in range(Level.level_size[0]):
-            for row in range(Level.level_size[1]):
-                state[col, row, Env.tile_to_channel[self.layout[row][col]]] = True
+        for col in range(Level.level_size[1]):
+            for row in range(Level.level_size[0]):
+                state[row, col, Env.tile_to_channel[self.layout[row][col]]] = True
 
     @staticmethod
     def load_level(level_name):
@@ -39,7 +39,7 @@ class Level:
         assert layout_file[-4:] == '.png'
         layout_image = Image.open(layout_file)
         layout_pixels = layout_image.load()
-        assert layout_image.size == Level.level_size
+        assert layout_image.size == (Level.level_size[1], Level.level_size[0])
         w, h = layout_image.size
         return [[_color_to_tile[layout_pixels[col, row]] for col in range(w)] for row in range(h)]
 
@@ -92,7 +92,7 @@ class Env:
     def __init__(self, ramping=None, random_state=None):
         self.channels = Env.channels
         self.random = np.random.RandomState() if random_state is None else random_state
-        self.screen_size = (Level.level_size[0], Level.level_size[1] + 1)  # 1 row for the HUD
+        self.screen_size = (Level.level_size[0] + 1, Level.level_size[1])  # 1 row for the HUD
         self.level = Level.load_level(Env.level_name)
         # Just for documentation, overridden in reset().
         self.screen_state, self.player_cell, self.enemies = None, None, None
@@ -118,7 +118,7 @@ class Env:
 
     def _create_screen_state(self):
         screen_state = np.zeros(self.state_shape(), dtype=bool)
-        self.level.initialize_state(screen_state[:, 1:, :])
+        self.level.initialize_state(screen_state[1:, :, :])
         screen_state[0, :, Env.channels['gauge_background']] = True
         return screen_state
 
