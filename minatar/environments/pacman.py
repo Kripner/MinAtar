@@ -82,7 +82,9 @@ class Env:
         'right_down_left': 9,
         'down_left_up': 10,
         'left_up_right_down': 11,
-        'gauge_background': 12
+        'gauge_background': 12,
+        'player': 13,
+        'enemy': 14
     }
     tile_to_channel = {}
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
@@ -120,10 +122,16 @@ class Env:
         screen_state = np.zeros(self.state_shape(), dtype=bool)
         self.level.initialize_state(screen_state[1:, :, :])
         screen_state[0, :, Env.channels['gauge_background']] = True
+        self._update_screen_state(screen_state)
         return screen_state
 
-    def _update_screen_state(self, state):
-        pass
+    def _update_screen_state(self, screen_state):
+        screen_state[:, :, Env.channels['player']] = False
+        screen_state[:, :, Env.channels['enemy']] = False
+
+        screen_state[self.player_cell[0], self.player_cell[1], Env.channels['player']] = True
+        for enemy in self.enemies:
+            screen_state[enemy.enemy_cell[0], enemy.enemy_cell[1], Env.channels['enemy']] = True
 
     def handle_human_action(self, action):
         pass
