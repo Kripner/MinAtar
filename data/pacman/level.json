@@ -1,0 +1,5 @@
+{
+"layout_file": "level.png",
+"enemies_starts": [[1, 1], [2, 2]],
+"player_start": [0, 0]
+}
