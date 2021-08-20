@@ -7,6 +7,13 @@ from PIL import Image
 import math
 
 
+class InventoryItem(Enum):
+    torch = 0
+    amulet = 1
+    key = 2
+    sword = 3
+
+
 class Env:
     channels = {
         'treasure_room_background': 0,
@@ -17,13 +24,23 @@ class Env:
         'laser_door': 5,
         'gauge_background': 6,
         'gauge_health': 7,
-        'gauge_keys': 8,
-        'lava': 9,
-        'ladder': 10,
-        'player': 11,
-        'enemy': 12,
-        'key': 13,
-        'coin': 14
+        'inventory_key': 8,
+        'inventory_sword': 9,
+        'inventory_torch': 10,
+        'inventory_amulet': 11,
+        'lava': 12,
+        'ladder': 13,
+        'player': 14,
+        'enemy': 15,
+        'key': 16,
+        'coin': 17
+    }
+    # TODO: evacuate to a class handling HUD drawing
+    _inventory_item_to_channel = {
+        InventoryItem.key: channels['inventory_key'],
+        InventoryItem.torch: channels['inventory_torch'],
+        InventoryItem.amulet: channels['inventory_amulet'],
+        InventoryItem.sword: channels['inventory_sword'],
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -127,8 +144,10 @@ class Env:
             width, height = self.screen_size
             state[0, :, Env.channels['gauge_health']] = False
             state[0, 0:self.player.health, Env.channels['gauge_health']] = True
-            state[0, :, Env.channels['gauge_keys']] = False
-            state[0, width - self.player.key_count:width, Env.channels['gauge_keys']] = True
+            for gauge_channel in Env._inventory_item_to_channel.values():
+                state[0, :, gauge_channel] = False
+            for i, item in enumerate(self.player.inventory):
+                state[0, width - i - 1, Env._inventory_item_to_channel[item]] = True
 
             state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
 
@@ -449,13 +468,13 @@ class Door:
             moving_data[y][top_x] = MovingObject.door
 
     def update(self, player):
-        if self.open or player.key_count == 0:
+        if self.open or InventoryItem.key not in player.inventory:
             return
         top_y, top_x = self.top_position
         player_y, player_x = player.get_player_cell()
         if abs(player_x - top_x) <= 1 and top_y <= player_y < top_y + self.height:
             self.open = True
-            player.key_count -= 1
+            player.inventory.remove(InventoryItem.key)
 
 
 class Key:
@@ -480,11 +499,11 @@ class Key:
         moving_data[y][x] = MovingObject.key
 
     def update(self, player):
-        if self.collected:
+        if self.collected or player.is_inventory_full():
             return
         if player.get_player_cell() == self.position:
             self.collected = True
-            player.key_count += 1
+            player.inventory.append(InventoryItem.key)
 
 
 class Coin:
@@ -607,17 +626,19 @@ class PlayerState(Enum):
 
 class Player:
     _max_hearths = 5
+    _inventory_size = 5
 
     def __init__(self):
         # For documentation purposes, overridden in reset() (which is called by the environment).
-        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, self.key_count, self.score = \
-            None, None, None, None, None, None, None, None
+        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, self.key_count, self.inventory, self.score = \
+            None, None, None, None, None, None, None, None, None
         self._ignored_until_released = []
 
     def reset(self, position):
         self.soft_reset(position)
         self.health = Player._max_hearths
         self.key_count = 0  # TODO: change to 0
+        self.inventory = []
         self.score = 0
 
     # called after player loses one hearth
@@ -627,6 +648,9 @@ class Player:
         self.player_state = PlayerState.standing
         self.exiting_ladder = False
         self.dead = False
+
+    def is_inventory_full(self):
+        return len(self.inventory) == Player._inventory_size
 
     def get_player_cell(self):
         return Env.position_to_cell(self.player_pos)
