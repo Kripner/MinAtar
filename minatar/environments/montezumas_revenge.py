@@ -39,13 +39,6 @@ class Env:
         'amulet': 20,
         'coin': 21,
     }
-    # TODO: evacuate to a class handling HUD drawing
-    _inventory_item_to_gauge_channel = {
-        InventoryItem.key: channels['inventory_key'],
-        InventoryItem.torch: channels['inventory_torch'],
-        InventoryItem.amulet: channels['inventory_amulet'],
-        InventoryItem.sword: channels['inventory_sword'],
-    }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
     lateral_jumping_speed = 0.5
@@ -130,9 +123,7 @@ class Env:
     def _create_screen_state(self):
         screen_state = np.zeros(self.state_shape(), dtype=bool)
         if self.game_state == GameState.in_maze:
-            # Initialize status bar.
-            screen_state[0, :, Env.channels['gauge_background']] = True
-            # Let the maze initialize the rest.
+            HUD.initialize_screen_state(screen_state)
             self.maze.initialize_screen_state(screen_state, self.player.has_torch())
         elif self.game_state == GameState.in_treasure_room:
             self.treasure_room.initialize_screen_state(screen_state)
@@ -145,17 +136,8 @@ class Env:
         player_cell = Env.position_to_cell(self.player.player_pos)
 
         if self.game_state == GameState.in_maze:
-            # Update status bar.
-            width, height = self.screen_size
-            state[0, :, Env.channels['gauge_health']] = False
-            state[0, 0:self.player.health, Env.channels['gauge_health']] = True
-            for gauge_channel in Env._inventory_item_to_gauge_channel.values():
-                state[0, :, gauge_channel] = False
-            for i, item in enumerate(self.player.inventory):
-                state[0, width - i - 1, Env._inventory_item_to_gauge_channel[item]] = True
-
+            HUD.update_screen_state(state, self)
             state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
-
             self.maze.update_screen_state(state, self.player.has_torch())
         elif self.game_state == GameState.in_treasure_room:
             state[player_cell[0], player_cell[1], Env.channels['player']] = True
@@ -192,6 +174,29 @@ class Env:
 class GameState(Enum):
     in_maze = 0
     in_treasure_room = 1
+
+
+class HUD:
+    _inventory_item_to_gauge_channel = {
+        InventoryItem.key: Env.channels['inventory_key'],
+        InventoryItem.torch: Env.channels['inventory_torch'],
+        InventoryItem.amulet: Env.channels['inventory_amulet'],
+        InventoryItem.sword: Env.channels['inventory_sword'],
+    }
+
+    @staticmethod
+    def initialize_screen_state(screen_state):
+        screen_state[0, :, Env.channels['gauge_background']] = True
+
+    @staticmethod
+    def update_screen_state(screen_state, environment):
+        width, height = environment.screen_size
+        screen_state[0, :, Env.channels['gauge_health']] = False
+        screen_state[0, 0:environment.player.health, Env.channels['gauge_health']] = True
+        for gauge_channel in HUD._inventory_item_to_gauge_channel.values():
+            screen_state[0, :, gauge_channel] = False
+        for i, item in enumerate(environment.player.inventory):
+            screen_state[0, width - i - 1, HUD._inventory_item_to_gauge_channel[item]] = True
 
 
 class Maze:
