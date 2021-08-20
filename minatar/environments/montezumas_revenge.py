@@ -327,61 +327,13 @@ class Room:
         assert len(player_starts) <= 1
         self.player_start = player_starts[0] if len(player_starts) == 1 else None
 
-        enemies_starts = [(y, x)
-                          for y in range(Room.room_size[1])
-                          for x in range(Room.room_size[0])
-                          if room_data[y][x] == RoomTile.enemy_start]
-        enemies = [Enemy(cell, self) for cell in enemies_starts]
-
-        # Doors are supposed to be vertical bars. This detects the top of each such bar.
-        door_tops = [(y, x)
-                     for y in range(Room.room_size[1])
-                     for x in range(Room.room_size[0])
-                     if room_data[y][x] == RoomTile.door and (
-                             y - 1 < 0 or room_data[y - 1][x] != RoomTile.door)]
-        doors = [Door(cell, self) for cell in door_tops]
-
-        keys_positions = [(y, x)
-                          for y in range(Room.room_size[1])
-                          for x in range(Room.room_size[0])
-                          if room_data[y][x] == RoomTile.key]
-        keys = [CollectableItem(cell, self, InventoryItem.key) for cell in keys_positions]
-        amulets_positions = [(y, x)
-                             for y in range(Room.room_size[1])
-                             for x in range(Room.room_size[0])
-                             if room_data[y][x] == RoomTile.amulet]
-        amulets = [CollectableItem(cell, self, InventoryItem.amulet) for cell in amulets_positions]
-        swords_positions = [(y, x)
-                            for y in range(Room.room_size[1])
-                            for x in range(Room.room_size[0])
-                            if room_data[y][x] == RoomTile.sword]
-        swords = [CollectableItem(cell, self, InventoryItem.sword) for cell in swords_positions]
-        torches_positions = [(y, x)
-                             for y in range(Room.room_size[1])
-                             for x in range(Room.room_size[0])
-                             if room_data[y][x] == RoomTile.torch]
-        torches = [CollectableItem(cell, self, InventoryItem.torch) for cell in torches_positions]
-
-        coins_positions = [(y, x)
-                           for y in range(Room.room_size[1])
-                           for x in range(Room.room_size[0])
-                           if room_data[y][x] == RoomTile.coin]
-        coins = [Coin(cell, self) for cell in coins_positions]
-
-        laser_door_tops = [(y, x)
-                           for y in range(Room.room_size[1])
-                           for x in range(Room.room_size[0])
-                           if room_data[y][x] == RoomTile.laser_door and (
-                                   y - 1 < 0 or room_data[y - 1][x] != RoomTile.laser_door)]
-        laser_doors = [LaserDoor(cell, self) for cell in laser_door_tops]
-
-        disappearing_walls = [DisappearingWall((y, x), self)
-                              for y in range(Room.room_size[1])
-                              for x in range(Room.room_size[0])
-                              if room_data[y][x] == RoomTile.disappearing_wall]
-
-        self.moving_objects = enemies + doors + laser_doors + disappearing_walls
-        self.scriptable_objects = self.moving_objects + keys + coins + amulets + swords + torches
+        self.moving_objects = Enemy.detect_all(room_data, self) + \
+                              Door.detect_all(room_data) + \
+                              LaserDoor.detect_all(room_data) + \
+                              DisappearingWall.detect_all(room_data)
+        self.scriptable_objects = self.moving_objects + \
+                                  Coin.detect_all(room_data) + \
+                                  CollectableItem.detect_all(room_data)
 
         # Just for documentation, overridden in _update_moving_state.
         self.moving_data = None
@@ -616,7 +568,8 @@ class Player:
         standing, on_ladder, flying, above_ladder = self._one_hot_state()
         if standing or on_ladder or above_ladder:
             if action == 'jump':
-                # Position the player to the center of current tile, to make sure every jump occurs from the same y-position.
+                # Position the player to the center of current tile, to make sure every jump occurs from the
+                # same y-position.
                 self.player_pos[0] = math.floor(self.player_pos[0]) + 0.5
                 self.player_speed[0] -= Env.jump_force
                 self.player_state = PlayerState.flying
@@ -725,16 +678,28 @@ class Player:
 
 
 class Door:
-    def __init__(self, top_position, room):
-        y, x = top_position
-        height = 1
-        while room.at((y + height, x)) == RoomTile.door:
-            height += 1
-
+    def __init__(self, top_position, height):
         self.top_position = top_position
         self.height = height
         self.open = False
         self.visible_in_dark = False
+
+    @staticmethod
+    def detect_all(room_data):
+        # Doors are supposed to be vertical bars. This detects the top of each such bar.
+        door_tops = [(y, x)
+                     for y in range(Room.room_size[1])
+                     for x in range(Room.room_size[0])
+                     if room_data[y][x] == RoomTile.door and (
+                             y - 1 < 0 or room_data[y - 1][x] != RoomTile.door)]
+        doors = []
+        for door_top in door_tops:
+            y, x = door_top
+            door_height = 1
+            while room_data[y + door_height][x] == RoomTile.door:
+                door_height += 1
+            doors.append(Door(door_top, door_height))
+        return doors
 
     @staticmethod
     def reset_state(state):
@@ -772,11 +737,27 @@ _inventory_item_to_channel = {
 
 
 class CollectableItem:
-    def __init__(self, position, room, item_type):
+    def __init__(self, position, item_type):
         self.position = position
         self.collected = False
         self.item_type = item_type
         self.visible_in_dark = False
+
+    @staticmethod
+    def detect_all(room_data):
+        keys_positions = [(y, x) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                          if room_data[y][x] == RoomTile.key]
+        keys = [CollectableItem(cell, InventoryItem.key) for cell in keys_positions]
+        amulets_positions = [(y, x) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                             if room_data[y][x] == RoomTile.amulet]
+        amulets = [CollectableItem(cell, InventoryItem.amulet) for cell in amulets_positions]
+        swords_positions = [(y, x) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                            if room_data[y][x] == RoomTile.sword]
+        swords = [CollectableItem(cell, InventoryItem.sword) for cell in swords_positions]
+        torches_positions = [(y, x) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                             if room_data[y][x] == RoomTile.torch]
+        torches = [CollectableItem(cell, InventoryItem.torch) for cell in torches_positions]
+        return keys + amulets + swords + torches
 
     @staticmethod
     def reset_state(state):
@@ -799,10 +780,15 @@ class CollectableItem:
 
 # TODO: unite with CollectableItem
 class Coin:
-    def __init__(self, position, room):
+    def __init__(self, position):
         self.position = position
         self.collected = False
         self.visible_in_dark = False
+
+    @staticmethod
+    def detect_all(room_data):
+        return [Coin((y, x)) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                if room_data[y][x] == RoomTile.coin]
 
     @staticmethod
     def reset_state(state):
@@ -826,17 +812,27 @@ class LaserDoor:
     opened_duration = 5
     closed_duration = 10
 
-    def __init__(self, top_position, room):
-        y, x = top_position
-        height = 1
-        while room.at((y + height, x)) == RoomTile.laser_door:
-            height += 1
-
+    def __init__(self, top_position, height):
         self.top_position = top_position
         self.height = height
         self.open = False
         self.ticks_since_switched = 0
         self.visible_in_dark = False
+
+    @staticmethod
+    def detect_all(room_data):
+        # Doors are supposed to be vertical bars. This detects the top of each such bar.
+        laser_door_tops = [(y, x) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                           if room_data[y][x] == RoomTile.laser_door and (
+                                   y - 1 < 0 or room_data[y - 1][x] != RoomTile.laser_door)]
+        laser_doors = []
+        for door_top in laser_door_tops:
+            y, x = door_top
+            door_height = 1
+            while room_data[y + door_height][x] == RoomTile.laser_door:
+                door_height += 1
+            laser_doors.append(LaserDoor(door_top, door_height))
+        return laser_doors
 
     @staticmethod
     def reset_state(state):
@@ -875,11 +871,16 @@ class DisappearingWall:
     present_duration = 10
     absent_duration = 5
 
-    def __init__(self, position, room):
+    def __init__(self, position):
         self.position = position
         self.present = False
         self.ticks_since_switched = 0
         self.visible_in_dark = True
+
+    @staticmethod
+    def detect_all(room_data):
+        return [DisappearingWall((y, x)) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                if room_data[y][x] == RoomTile.disappearing_wall]
 
     @staticmethod
     def reset_state(state):
@@ -916,6 +917,11 @@ class Enemy:
         # For documentation purposes, overridden in reset().
         self.enemy_cell, self.ticks_since_move, self.previous_cell, self.dead = None, None, None, None
         self.reset()
+
+    @staticmethod
+    def detect_all(room_data, room):
+        return [Enemy((y, x), room) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                if room_data[y][x] == RoomTile.enemy_start]
 
     @staticmethod
     def reset_state(state):
