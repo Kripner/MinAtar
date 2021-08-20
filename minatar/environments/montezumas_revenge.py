@@ -50,19 +50,19 @@ class Env:
 
     def reset(self):
         self._reset_to_starting_point()
-        self.player.reset(Env.cell_to_position(self.maze.soft_reset_position))
+        self.player.reset(Env.cell_to_position(self.maze.soft_reset_cell))
         self.trigger_screen_state_redraw()
         self.last_score = self.player.score
 
     def _reset_to_starting_point(self):
         self.game_state = GameState.in_maze
         self.maze.reset()
-        self.player.soft_reset(Env.cell_to_position(self.maze.soft_reset_position))
+        self.player.soft_reset(Env.cell_to_position(self.maze.soft_reset_cell))
         self.trigger_screen_state_redraw()
 
     # Called after player loses one hearth.
     def _soft_reset(self):
-        self.player.soft_reset(Env.cell_to_position(self.maze.soft_reset_position))
+        self.player.soft_reset(Env.cell_to_position(self.maze.soft_reset_cell))
         self.trigger_screen_state_redraw()
 
     def act(self, action_num):
@@ -147,7 +147,7 @@ class Env:
 
     @staticmethod
     def cell_to_position(cell):
-        return np.array(cell, dtype=np.float32)
+        return np.array([cell[0] + 0.5, cell[1] + 0.5], dtype=np.float32)
 
     def _get_checkpoint(self):
         return self.maze.get_checkpoint(self.player)
@@ -174,7 +174,7 @@ class Maze:
     def __init__(self, environment):
         self.environment = environment
         # For documentation purposes, overridden in reset().
-        self.rooms, self.room, self.soft_reset_position, = \
+        self.rooms, self.room, self.soft_reset_cell, = \
             None, None, None
         self.pending_event = None
         self.reset()
@@ -183,7 +183,7 @@ class Maze:
         self.rooms = RoomCache()
         self._change_room(Env.initial_room)
         assert self.room.player_start is not None, 'Initial room does not specify initial player position.'
-        self.soft_reset_position = self.room.player_start
+        self.soft_reset_cell = self.room.player_start
 
     def initialize_screen_state(self, screen_state):
         for y in range(Room.room_size[1]):
@@ -237,9 +237,10 @@ class Maze:
                 self.pending_event = MazeEvent.entered_treasure_room
             else:
                 self._change_room(next_neighbour_name)
-                self.soft_reset_position = next_location
+                self.soft_reset_cell = next_location
                 self.pending_event = MazeEvent.changed_room
             player.player_pos = Env.cell_to_position(next_location)
+            player.player_speed = np.array([0, 0], dtype=np.float32)
             return True
         return False
 
@@ -250,7 +251,7 @@ class Maze:
     def get_checkpoint(self, player):
         return MazeCheckpoint(
             room_name=self.room.room_name,
-            soft_reset_position=self.soft_reset_position,
+            soft_reset_cell=self.soft_reset_cell,
             player_pos=player.player_pos,
             player_speed=player.player_speed,
             player_state=player.player_state,
@@ -260,7 +261,7 @@ class Maze:
     # TODO: PlayerCheckpoint, remove the argument
     def apply_checkpoint(self, checkpoint, player):
         self._change_room(checkpoint.room_name)
-        self.soft_reset_position = checkpoint.soft_reset_position
+        self.soft_reset_cell = checkpoint.soft_reset_cell
         player.player_pos = checkpoint.player_pos
         player.player_speed = checkpoint.player_speed
         player.player_state = checkpoint.player_state
@@ -268,7 +269,7 @@ class Maze:
 
 
 MazeCheckpoint = namedtuple('MazeCheckpoint',
-                            ['room_name', 'soft_reset_position', 'player_pos', 'player_speed',
+                            ['room_name', 'soft_reset_cell', 'player_pos', 'player_speed',
                              'player_state', 'exiting_ladder'])
 
 
@@ -654,6 +655,7 @@ class Player:
         else:
             self._ignored_until_released = []
 
+        print(self.player_state, self.player_pos, self.player_speed, action)
         curr_y, curr_x = self.get_player_cell()
         self._update_player_speed(maze, action)
         new_player_pos = self._calculate_new_position(maze, action)
@@ -665,11 +667,12 @@ class Player:
         y, x = curr_y, curr_x
         crashed = False
         for delta in range(1, max_delta):
+            print('! loop')
             if dy != 0 and (y - curr_y) / dy < delta / max_delta:
                 y += np.sign(new_y - curr_y)
             if dx != 0 and (x - curr_x) / dx < delta / max_delta:
                 x += np.sign(new_x - curr_x)
-            if not self._try_transitioning_to((y, x), maze, action):
+            if not self._try_transitioning_to(np.array([y, x], dtype=np.float32), maze, action):
                 crashed = True
                 break
         if not crashed:
@@ -696,12 +699,12 @@ class Player:
                 action != 'down':
             crashed = True
 
-        # if crashed:
-        #     print(self.player_speed[0], end='')
-        #     if self.player_speed[0] > 1:
-        #         print(' -> died')
-        #     else:
-        #         print()
+        if crashed:
+            print(self.player_speed[0], end='')
+            if self.player_speed[0] > 1:
+                print(' -> died')
+            else:
+                print()
 
         transitioned = not crashed and not changed_room
         if transitioned:
@@ -716,6 +719,8 @@ class Player:
         standing, on_ladder, flying, above_ladder = self._one_hot_state()
         if standing or on_ladder or above_ladder:
             if action == 'jump':
+                # Position the player to the center of current tile, to make sure every jump occurs from the same y-position.
+                self.player_pos[0] = math.floor(self.player_pos[0]) + 0.5
                 self.player_speed[0] -= Env.jump_force
                 self.player_state = PlayerState.flying
                 if maze.room.at(self.get_player_cell()) == RoomTile.ladder:
@@ -771,8 +776,7 @@ class Player:
         can_be_on_ladder = curr_room.at(player_cell) == RoomTile.ladder
         flying_up = self.player_speed[0] < -10e-3
         can_stand_on_ladder = not flying_up and curr_room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder
-        can_stand = not flying_up and ((not Room.is_inside(cell_bellow)) or
-                                       curr_room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or
+        can_stand = not flying_up and (curr_room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or
                                        can_stand_on_ladder or
                                        curr_room.at_moving(cell_bellow) in [MovingObject.disappearing_wall,
                                                                             MovingObject.door])
@@ -799,7 +803,8 @@ class Player:
             if not can_stand:
                 return PlayerState.flying
         if self.player_state == PlayerState.on_ladder:
-            if can_stand:
+            # Allow transitioning to the level below by climbing a ladder.
+            if can_stand and curr_room.is_inside(cell_bellow):
                 return PlayerState.standing
             if not can_be_on_ladder and can_stand_on_ladder:
                 self.exiting_ladder = False
