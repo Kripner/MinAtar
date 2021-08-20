@@ -33,10 +33,13 @@ class Env:
         'player': 14,
         'enemy': 15,
         'key': 16,
-        'coin': 17
+        'sword': 17,
+        'torch': 18,
+        'amulet': 19,
+        'coin': 20
     }
     # TODO: evacuate to a class handling HUD drawing
-    _inventory_item_to_channel = {
+    _inventory_item_to_gauge_channel = {
         InventoryItem.key: channels['inventory_key'],
         InventoryItem.torch: channels['inventory_torch'],
         InventoryItem.amulet: channels['inventory_amulet'],
@@ -144,10 +147,10 @@ class Env:
             width, height = self.screen_size
             state[0, :, Env.channels['gauge_health']] = False
             state[0, 0:self.player.health, Env.channels['gauge_health']] = True
-            for gauge_channel in Env._inventory_item_to_channel.values():
+            for gauge_channel in Env._inventory_item_to_gauge_channel.values():
                 state[0, :, gauge_channel] = False
             for i, item in enumerate(self.player.inventory):
-                state[0, width - i - 1, Env._inventory_item_to_channel[item]] = True
+                state[0, width - i - 1, Env._inventory_item_to_gauge_channel[item]] = True
 
             state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
 
@@ -188,6 +191,13 @@ class GameState(Enum):
     in_maze = 0
     in_treasure_room = 1
 
+
+_inventory_item_to_channel = {
+    InventoryItem.key: Env.channels['key'],
+    InventoryItem.torch: Env.channels['torch'],
+    InventoryItem.amulet: Env.channels['amulet'],
+    InventoryItem.sword: Env.channels['sword'],
+}
 
 class Maze:
     def __init__(self, environment):
@@ -366,7 +376,7 @@ class Room:
                           for y in range(Room.room_size[1])
                           for x in range(Room.room_size[0])
                           if room_data[y][x] == RoomTile.key]
-        keys = [Key(cell, self) for cell in keys_positions]
+        keys = [CollectableItem(cell, self, InventoryItem.key) for cell in keys_positions]
 
         coins_positions = [(y, x)
                            for y in range(Room.room_size[1])
@@ -386,14 +396,15 @@ class Room:
                               for x in range(Room.room_size[0])
                               if room_data[y][x] == RoomTile.disappearing_wall]
 
-        self.moving_parts = enemies + doors + keys + laser_doors + disappearing_walls + coins
+        self.moving_objects = enemies + doors + laser_doors + disappearing_walls
+        self.scriptable_objects = self.moving_objects + keys + coins
 
         # Just for documentation, overridden in _update_moving_state.
         self.moving_data = None
         self._update_moving_state()
 
     def update(self, player):
-        for o in self.moving_parts:
+        for o in self.scriptable_objects:
             o.update(player)
         self._update_moving_state()
 
@@ -401,23 +412,23 @@ class Room:
         moving_data = [[MovingObject.none
                         for _ in range(Room.room_size[0])]
                        for _ in range(Room.room_size[1])]
-        for o in self.moving_parts:
+        for o in self.moving_objects:
             o.draw(moving_data)
         self.moving_data = moving_data
 
     def update_screen_state(self, state):
         Enemy.reset_state(state)
         Door.reset_state(state)
-        Key.reset_state(state)
+        CollectableItem.reset_state(state)
         LaserDoor.reset_state(state)
         DisappearingWall.reset_state(state)
         Coin.reset_state(state)
 
-        for o in self.moving_parts:
+        for o in self.scriptable_objects:
             o.add_to_state(state)
 
     def reset(self):
-        for o in self.moving_parts:
+        for o in self.scriptable_objects:
             o.reset()
 
     @staticmethod
@@ -477,33 +488,29 @@ class Door:
             player.inventory.remove(InventoryItem.key)
 
 
-class Key:
-    def __init__(self, position, room):
+class CollectableItem:
+    def __init__(self, position, room, item_type):
         self.position = position
         self.collected = False
+        self.item_type = item_type
 
     @staticmethod
     def reset_state(state):
-        state[:, :, Env.channels['key']] = False
+        for channel in _inventory_item_to_channel.values():
+            state[:, :, channel] = False
 
     def add_to_state(self, state):
         if self.collected:
             return
         y, x = self.position
-        state[y + 1, x, Env.channels['key']] = True
-
-    def draw(self, moving_data):
-        if self.collected:
-            return
-        y, x = self.position
-        moving_data[y][x] = MovingObject.key
+        state[y + 1, x, _inventory_item_to_channel[self.item_type]] = True
 
     def update(self, player):
         if self.collected or player.is_inventory_full():
             return
         if player.get_player_cell() == self.position:
             self.collected = True
-            player.inventory.append(InventoryItem.key)
+            player.inventory.append(self.item_type)
 
 
 class Coin:
@@ -520,12 +527,6 @@ class Coin:
             return
         y, x = self.position
         state[y + 1, x, Env.channels['coin']] = True
-
-    def draw(self, moving_data):
-        if self.collected:
-            return
-        y, x = self.position
-        moving_data[y][x] = MovingObject.coin
 
     def update(self, player):
         if self.collected:
@@ -949,10 +950,8 @@ class MovingObject(Enum):
     none = 0
     enemy = 1
     door = 2
-    key = 3
-    laser_door = 4
-    disappearing_wall = 5
-    coin = 6
+    laser_door = 3
+    disappearing_wall = 4
 
 
 class RoomTile(Enum):
