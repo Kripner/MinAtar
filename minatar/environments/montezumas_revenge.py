@@ -16,27 +16,28 @@ class InventoryItem(Enum):
 
 class Env:
     channels = {
-        'treasure_room_background': 0,
-        'wall': 1,
-        'disappearing_wall': 2,
-        'moving_sand': 3,
-        'door': 4,
-        'laser_door': 5,
-        'gauge_background': 6,
-        'gauge_health': 7,
-        'inventory_key': 8,
-        'inventory_sword': 9,
-        'inventory_torch': 10,
-        'inventory_amulet': 11,
-        'lava': 12,
-        'ladder': 13,
-        'player': 14,
-        'enemy': 15,
-        'key': 16,
-        'sword': 17,
-        'torch': 18,
-        'amulet': 19,
-        'coin': 20
+        'darkness': 0,
+        'treasure_room_background': 1,
+        'wall': 2,
+        'disappearing_wall': 3,
+        'moving_sand': 4,
+        'door': 5,
+        'laser_door': 6,
+        'gauge_background': 7,
+        'gauge_health': 8,
+        'inventory_key': 9,
+        'inventory_sword': 10,
+        'inventory_torch': 11,
+        'inventory_amulet': 12,
+        'lava': 13,
+        'ladder': 14,
+        'player': 15,
+        'enemy': 16,
+        'key': 17,
+        'sword': 18,
+        'torch': 19,
+        'amulet': 20,
+        'coin': 21,
     }
     # TODO: evacuate to a class handling HUD drawing
     _inventory_item_to_gauge_channel = {
@@ -79,7 +80,6 @@ class Env:
         self.game_state = GameState.in_maze
         self.maze.reset()
         self.player.soft_reset(Env.cell_to_position(self.maze.soft_reset_cell))
-        self.trigger_screen_state_redraw()
 
     # Called after player loses one hearth.
     def _soft_reset(self):
@@ -107,6 +107,7 @@ class Env:
             back_to_maze = self.treasure_room.update(self.player, action)
             if back_to_maze:
                 self._reset_to_starting_point()
+                self.trigger_screen_state_redraw()
         else:
             assert False
         self._update_screen_state(self.screen_state)
@@ -132,7 +133,7 @@ class Env:
             # Initialize status bar.
             screen_state[0, :, Env.channels['gauge_background']] = True
             # Let the maze initialize the rest.
-            self.maze.initialize_screen_state(screen_state)
+            self.maze.initialize_screen_state(screen_state, self.player.has_torch())
         elif self.game_state == GameState.in_treasure_room:
             self.treasure_room.initialize_screen_state(screen_state)
         else:
@@ -155,7 +156,7 @@ class Env:
 
             state[player_cell[0] + 1, player_cell[1], Env.channels['player']] = True
 
-            self.maze.update_screen_state(state)
+            self.maze.update_screen_state(state, self.player.has_torch())
         elif self.game_state == GameState.in_treasure_room:
             state[player_cell[0], player_cell[1], Env.channels['player']] = True
             self.treasure_room.update_screen_state(state)
@@ -216,15 +217,20 @@ class Maze:
         assert self.room.player_start is not None, 'Initial room does not specify initial player position.'
         self.soft_reset_cell = self.room.player_start
 
-    def initialize_screen_state(self, screen_state):
+    def initialize_screen_state(self, screen_state, has_torch):
         for y in range(Room.room_size[1]):
             for x in range(Room.room_size[0]):
-                tile = self.room.room_data[y][x]
-                if tile in _tile_to_channel:
-                    screen_state[y + 1, x, Env.channels[_tile_to_channel[tile]]] = True
+                if self.room.is_dark and not has_torch:
+                    channel = 'darkness'
+                else:
+                    tile = self.room.room_data[y][x]
+                    if tile not in _tile_to_channel:
+                        continue
+                    channel = _tile_to_channel[tile]
+                screen_state[y + 1, x, Env.channels[channel]] = True
 
-    def update_screen_state(self, screen_state):
-        self.room.update_screen_state(screen_state)
+    def update_screen_state(self, screen_state, has_torch):
+        self.room.update_screen_state(screen_state, has_torch)
 
     def update(self, player, action):
         player.update_inside_maze(action, self)
@@ -347,10 +353,11 @@ class Room:
     room_size = (20, 19)  # (width, height)
     neighbours_names = ['left_neighbour', 'top_neighbour', 'right_neighbour', 'bottom_neighbour']
 
-    def __init__(self, room_name, room_data, neighbours):
+    def __init__(self, room_name, room_data, neighbours, is_dark):
         self.room_name = room_name
         self.room_data = room_data
         self.neighbours = neighbours
+        self.is_dark = is_dark
         player_starts = [(y, x)
                          for y in range(Room.room_size[1])
                          for x in range(Room.room_size[0])
@@ -431,7 +438,7 @@ class Room:
             o.draw(moving_data)
         self.moving_data = moving_data
 
-    def update_screen_state(self, state):
+    def update_screen_state(self, state, has_torch):
         Enemy.reset_state(state)
         Door.reset_state(state)
         CollectableItem.reset_state(state)
@@ -440,7 +447,8 @@ class Room:
         Coin.reset_state(state)
 
         for o in self.scriptable_objects:
-            o.add_to_state(state)
+            if not self.is_dark or has_torch or o.visible_in_dark:
+                o.add_to_state(state)
 
     def reset(self):
         for o in self.scriptable_objects:
@@ -475,6 +483,7 @@ class Door:
         self.top_position = top_position
         self.height = height
         self.open = False
+        self.visible_in_dark = False
 
     @staticmethod
     def reset_state(state):
@@ -508,6 +517,7 @@ class CollectableItem:
         self.position = position
         self.collected = False
         self.item_type = item_type
+        self.visible_in_dark = False
 
     @staticmethod
     def reset_state(state):
@@ -533,6 +543,7 @@ class Coin:
     def __init__(self, position, room):
         self.position = position
         self.collected = False
+        self.visible_in_dark = False
 
     @staticmethod
     def reset_state(state):
@@ -566,6 +577,7 @@ class LaserDoor:
         self.height = height
         self.open = False
         self.ticks_since_switched = 0
+        self.visible_in_dark = False
 
     @staticmethod
     def reset_state(state):
@@ -608,6 +620,7 @@ class DisappearingWall:
         self.position = position
         self.present = False
         self.ticks_since_switched = 0
+        self.visible_in_dark = True
 
     @staticmethod
     def reset_state(state):
@@ -655,7 +668,8 @@ class Player:
     def reset(self, position):
         self.soft_reset(position)
         self.health = Player._max_hearths
-        self.inventory = []
+        #self.inventory = []
+        self.inventory = [InventoryItem.key] * 3  # TODO
         self.score = 0
         self.amulet_active = False
         self.ticks_since_amulet_activated = 0  # only meaningful if self.amulet_active == True
@@ -670,6 +684,9 @@ class Player:
 
     def is_inventory_full(self):
         return len(self.inventory) == Player._inventory_size
+
+    def has_torch(self):
+        return InventoryItem.torch in self.inventory
 
     def collect(self, item):
         if item == InventoryItem.amulet:
@@ -894,6 +911,7 @@ class Enemy:
         # For documentation purposes, overridden in reset().
         self.enemy_cell, self.ticks_since_move, self.previous_cell = None, None, None
         self.reset()
+        self.visible_in_dark = True
 
     @staticmethod
     def reset_state(state):
@@ -965,7 +983,8 @@ class RoomCache:
             room_data = RoomCache._load_room_data(_get_file_location(data['data_file']))
             neighbours = {neighbour: data[neighbour] for neighbour in Room.neighbours_names if
                           neighbour in data}
-            return Room(room_name, room_data, neighbours)
+            is_dark = False if 'is_dark' not in data else data['is_dark']
+            return Room(room_name, room_data, neighbours, is_dark)
 
     @staticmethod
     def _load_room_data(data_file):

@@ -2,5 +2,7 @@
 "data_file": "room-6.png",
 "left_neighbour": "room-5",
 "right_neighbour": "room-7",
-"top_neighbour": "room-16"
+"top_neighbour": "room-16",
+"is_dark": true
+
 }

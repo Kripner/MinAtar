@@ -2,5 +2,6 @@
 "data_file": "room-4.png",
 "left_neighbour": "room-3",
 "right_neighbour": "room-5",
-"top_neighbour": "room-14"
+"top_neighbour": "room-14",
+"is_dark": true
 }
