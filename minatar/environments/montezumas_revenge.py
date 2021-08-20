@@ -661,14 +661,14 @@ class Player:
     def __init__(self):
         # For documentation purposes, overridden in reset() (which is called by the environment).
         self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, \
-            self.inventory, self.score, self.amulet_active, self.ticks_since_amulet_activated = \
+        self.inventory, self.score, self.amulet_active, self.ticks_since_amulet_activated = \
             None, None, None, None, None, None, None, None, None, None
         self._ignored_until_released = []
 
     def reset(self, position):
         self.soft_reset(position)
         self.health = Player._max_hearths
-        #self.inventory = []
+        # self.inventory = []
         self.inventory = [InventoryItem.key] * 3  # TODO
         self.score = 0
         self.amulet_active = False
@@ -687,6 +687,12 @@ class Player:
 
     def has_torch(self):
         return InventoryItem.torch in self.inventory
+
+    def has_sword(self):
+        return InventoryItem.sword in self.inventory
+
+    def use_sword(self):
+        self.inventory.remove(InventoryItem.sword)
 
     def collect(self, item):
         if item == InventoryItem.amulet:
@@ -908,30 +914,44 @@ class Enemy:
     def __init__(self, starting_cell, room):
         self.starting_cell = starting_cell
         self.room = room
-        # For documentation purposes, overridden in reset().
-        self.enemy_cell, self.ticks_since_move, self.previous_cell = None, None, None
-        self.reset()
         self.visible_in_dark = True
+        # For documentation purposes, overridden in reset().
+        self.enemy_cell, self.ticks_since_move, self.previous_cell, self.dead = None, None, None, None
+        self.reset()
 
     @staticmethod
     def reset_state(state):
         state[:, :, Env.channels['enemy']] = False
 
     def add_to_state(self, state):
+        if self.dead:
+            return
         state[self.enemy_cell[0] + 1, self.enemy_cell[1], Env.channels['enemy']] = True
 
     def draw(self, moving_data):
+        if self.dead:
+            return
         y, x = self.enemy_cell
         moving_data[y][x] = MovingObject.enemy
 
     def update(self, player):
+        if self.dead:
+            return
+
         if self.ticks_since_move + 1 == Enemy._ticks_per_move:
             self._move()
             self.ticks_since_move = 0
         else:
             self.ticks_since_move += 1
         if player.get_player_cell() == self.enemy_cell and not player.amulet_active:
-            player.die()
+            if player.has_sword():
+                player.use_sword()
+                self._die()
+            else:
+                player.die()
+
+    def _die(self):
+        self.dead = True
 
     def _move(self):
         path_neighbours = [c for c in neighbour_cells(self.enemy_cell) if
@@ -952,6 +972,7 @@ class Enemy:
         self.enemy_cell = self.starting_cell
         self.ticks_since_move = 0
         self.previous_cell = None
+        self.dead = False
 
 
 def neighbour_cells(cell):
