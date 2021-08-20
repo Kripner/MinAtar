@@ -52,7 +52,7 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 0.9
-    initial_room = 'room-12'  # TODO: change
+    initial_room = 'room-35'  # TODO: change
     treasure_room_walk_speed = 1
     score_per_coin = 1000
 
@@ -198,6 +198,7 @@ _inventory_item_to_channel = {
     InventoryItem.amulet: Env.channels['amulet'],
     InventoryItem.sword: Env.channels['sword'],
 }
+
 
 class Maze:
     def __init__(self, environment):
@@ -377,6 +378,21 @@ class Room:
                           for x in range(Room.room_size[0])
                           if room_data[y][x] == RoomTile.key]
         keys = [CollectableItem(cell, self, InventoryItem.key) for cell in keys_positions]
+        amulets_positions = [(y, x)
+                             for y in range(Room.room_size[1])
+                             for x in range(Room.room_size[0])
+                             if room_data[y][x] == RoomTile.amulet]
+        amulets = [CollectableItem(cell, self, InventoryItem.amulet) for cell in amulets_positions]
+        swords_positions = [(y, x)
+                            for y in range(Room.room_size[1])
+                            for x in range(Room.room_size[0])
+                            if room_data[y][x] == RoomTile.sword]
+        swords = [CollectableItem(cell, self, InventoryItem.sword) for cell in swords_positions]
+        torches_positions = [(y, x)
+                             for y in range(Room.room_size[1])
+                             for x in range(Room.room_size[0])
+                             if room_data[y][x] == RoomTile.torch]
+        torches = [CollectableItem(cell, self, InventoryItem.torch) for cell in torches_positions]
 
         coins_positions = [(y, x)
                            for y in range(Room.room_size[1])
@@ -397,7 +413,7 @@ class Room:
                               if room_data[y][x] == RoomTile.disappearing_wall]
 
         self.moving_objects = enemies + doors + laser_doors + disappearing_walls
-        self.scriptable_objects = self.moving_objects + keys + coins
+        self.scriptable_objects = self.moving_objects + keys + coins + amulets + swords + torches
 
         # Just for documentation, overridden in _update_moving_state.
         self.moving_data = None
@@ -513,6 +529,7 @@ class CollectableItem:
             player.inventory.append(self.item_type)
 
 
+# TODO: unite with CollectableItem
 class Coin:
     def __init__(self, position, room):
         self.position = position
@@ -965,9 +982,12 @@ class RoomTile(Enum):
     moving_sand = 7
     door = 8
     key = 9
-    laser_door = 10
-    disappearing_wall = 11
-    coin = 12
+    amulet = 10
+    sword = 11
+    torch = 12
+    laser_door = 13
+    disappearing_wall = 14
+    coin = 15
 
 
 _tile_to_channel = {
@@ -993,6 +1013,9 @@ _color_to_tile = {
     _hex(0xff00ff): RoomTile.moving_sand,
     _hex(0xac6000): RoomTile.door,
     _hex(0xac8f00): RoomTile.key,
+    _hex(0x4d0404): RoomTile.amulet,
+    _hex(0x3c4d04): RoomTile.sword,
+    _hex(0xaaaf97): RoomTile.torch,
     _hex(0x584052): RoomTile.laser_door,
     _hex(0x626262): RoomTile.disappearing_wall,
     _hex(0xff9400): RoomTile.coin
