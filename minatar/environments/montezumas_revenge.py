@@ -194,14 +194,6 @@ class GameState(Enum):
     in_treasure_room = 1
 
 
-_inventory_item_to_channel = {
-    InventoryItem.key: Env.channels['key'],
-    InventoryItem.torch: Env.channels['torch'],
-    InventoryItem.amulet: Env.channels['amulet'],
-    InventoryItem.sword: Env.channels['sword'],
-}
-
-
 class Maze:
     def __init__(self, environment):
         self.environment = environment
@@ -312,41 +304,6 @@ class MazeEvent(Enum):
     player_died = 0
     changed_room = 1
     entered_treasure_room = 2
-
-
-class TreasureRoom:
-    ticks_before_ending = 100
-
-    def __init__(self, random):
-        self.random = random
-        self.ticks_since_start = 0
-        self.coin_cell = None
-        self._randomize_coin_position()
-
-    # Returns whether the player's time in the treasure room has expired.
-    def update(self, player, action):
-        self.ticks_since_start += 1
-        if self.ticks_since_start == TreasureRoom.ticks_before_ending:
-            return True
-        player.update_inside_treasure_room(action)
-        player_cell = player.get_player_cell()
-        if player_cell == self.coin_cell:
-            player.score += Env.score_per_coin
-            while player_cell == self.coin_cell:
-                self._randomize_coin_position()
-
-        return False
-
-    def _randomize_coin_position(self):
-        self.coin_cell = (self.random.randint(0, Room.room_size[1] - 1),
-                          self.random.randint(0, Room.room_size[0] - 1))
-
-    def initialize_screen_state(self, screen_state):
-        screen_state[0, :, Env.channels['treasure_room_background']] = True
-
-    def update_screen_state(self, screen_state):
-        screen_state[:, :, Env.channels['coin']] = False
-        screen_state[self.coin_cell[0], self.coin_cell[1], Env.channels['coin']] = True
 
 
 class Room:
@@ -473,185 +430,39 @@ class Room:
         return self.at(cell) in [RoomTile.wall, RoomTile.moving_sand] or self.at_moving(cell) in [MovingObject.door]
 
 
-class Door:
-    def __init__(self, top_position, room):
-        y, x = top_position
-        height = 1
-        while room.at((y + height, x)) == RoomTile.door:
-            height += 1
+class TreasureRoom:
+    ticks_before_ending = 100
 
-        self.top_position = top_position
-        self.height = height
-        self.open = False
-        self.visible_in_dark = False
+    def __init__(self, random):
+        self.random = random
+        self.ticks_since_start = 0
+        self.coin_cell = None
+        self._randomize_coin_position()
 
-    @staticmethod
-    def reset_state(state):
-        state[:, :, Env.channels['door']] = False
+    # Returns whether the player's time in the treasure room has expired.
+    def update(self, player, action):
+        self.ticks_since_start += 1
+        if self.ticks_since_start == TreasureRoom.ticks_before_ending:
+            return True
+        player.update_inside_treasure_room(action)
+        player_cell = player.get_player_cell()
+        if player_cell == self.coin_cell:
+            player.score += Env.score_per_coin
+            while player_cell == self.coin_cell:
+                self._randomize_coin_position()
 
-    def add_to_state(self, state):
-        if self.open:
-            return
-        top_y, top_x = self.top_position
-        state[top_y + 1:top_y + self.height + 1, top_x, Env.channels['door']] = True
+        return False
 
-    def draw(self, moving_data):
-        if self.open:
-            return
-        top_y, top_x = self.top_position
-        for y in range(top_y, top_y + self.height):
-            moving_data[y][top_x] = MovingObject.door
+    def _randomize_coin_position(self):
+        self.coin_cell = (self.random.randint(0, Room.room_size[1] - 1),
+                          self.random.randint(0, Room.room_size[0] - 1))
 
-    def update(self, player):
-        if self.open or InventoryItem.key not in player.inventory:
-            return
-        top_y, top_x = self.top_position
-        player_y, player_x = player.get_player_cell()
-        if abs(player_x - top_x) <= 1 and top_y <= player_y < top_y + self.height:
-            self.open = True
-            player.inventory.remove(InventoryItem.key)
+    def initialize_screen_state(self, screen_state):
+        screen_state[0, :, Env.channels['treasure_room_background']] = True
 
-
-class CollectableItem:
-    def __init__(self, position, room, item_type):
-        self.position = position
-        self.collected = False
-        self.item_type = item_type
-        self.visible_in_dark = False
-
-    @staticmethod
-    def reset_state(state):
-        for channel in _inventory_item_to_channel.values():
-            state[:, :, channel] = False
-
-    def add_to_state(self, state):
-        if self.collected:
-            return
-        y, x = self.position
-        state[y + 1, x, _inventory_item_to_channel[self.item_type]] = True
-
-    def update(self, player):
-        if self.collected or player.is_inventory_full():
-            return
-        if player.get_player_cell() == self.position:
-            self.collected = True
-            player.collect(self.item_type)
-
-
-# TODO: unite with CollectableItem
-class Coin:
-    def __init__(self, position, room):
-        self.position = position
-        self.collected = False
-        self.visible_in_dark = False
-
-    @staticmethod
-    def reset_state(state):
-        state[:, :, Env.channels['coin']] = False
-
-    def add_to_state(self, state):
-        if self.collected:
-            return
-        y, x = self.position
-        state[y + 1, x, Env.channels['coin']] = True
-
-    def update(self, player):
-        if self.collected:
-            return
-        if player.get_player_cell() == self.position:
-            self.collected = True
-            player.score += 1000
-
-
-class LaserDoor:
-    opened_duration = 5
-    closed_duration = 10
-
-    def __init__(self, top_position, room):
-        y, x = top_position
-        height = 1
-        while room.at((y + height, x)) == RoomTile.laser_door:
-            height += 1
-
-        self.top_position = top_position
-        self.height = height
-        self.open = False
-        self.ticks_since_switched = 0
-        self.visible_in_dark = False
-
-    @staticmethod
-    def reset_state(state):
-        state[:, :, Env.channels['laser_door']] = False
-
-    def add_to_state(self, state):
-        if self.open:
-            return
-        top_y, top_x = self.top_position
-        state[top_y + 1:top_y + self.height + 1, top_x, Env.channels['laser_door']] = True
-
-    def draw(self, moving_data):
-        if self.open:
-            return
-        top_y, top_x = self.top_position
-        for y in range(top_y, top_y + self.height):
-            moving_data[y][top_x] = MovingObject.laser_door
-
-    def update(self, player):
-        self.ticks_since_switched += 1
-        should_switch = self.ticks_since_switched == (
-            LaserDoor.opened_duration if self.open else LaserDoor.closed_duration)
-        if should_switch:
-            self.open = not self.open
-            self.ticks_since_switched = 0
-
-        if self.open:
-            return
-        top_y, top_x = self.top_position
-        player_y, player_x = player.get_player_cell()
-        if player_x == top_x and top_y <= player_y < top_y + self.height:
-            player.die()
-
-
-class DisappearingWall:
-    present_duration = 10
-    absent_duration = 5
-
-    def __init__(self, position, room):
-        self.position = position
-        self.present = False
-        self.ticks_since_switched = 0
-        self.visible_in_dark = True
-
-    @staticmethod
-    def reset_state(state):
-        state[:, :, Env.channels['disappearing_wall']] = False
-
-    def add_to_state(self, state):
-        if not self.present:
-            return
-        y, x = self.position
-        state[y + 1, x, Env.channels['disappearing_wall']] = True
-
-    def draw(self, moving_data):
-        if not self.present:
-            return
-        y, x = self.position
-        moving_data[y][x] = MovingObject.disappearing_wall
-
-    def update(self, player):
-        self.ticks_since_switched += 1
-        should_switch = self.ticks_since_switched >= (
-            DisappearingWall.present_duration if self.present else DisappearingWall.absent_duration)
-        if should_switch:
-            self.present = not self.present
-            self.ticks_since_switched = 0
-
-
-class PlayerState(Enum):
-    standing = 0
-    flying = 1
-    on_ladder = 2
-    above_ladder = 3
+    def update_screen_state(self, screen_state):
+        screen_state[:, :, Env.channels['coin']] = False
+        screen_state[self.coin_cell[0], self.coin_cell[1], Env.channels['coin']] = True
 
 
 class Player:
@@ -908,6 +719,188 @@ class Player:
                self.player_state == PlayerState.flying, self.player_state == PlayerState.above_ladder
 
 
+class Door:
+    def __init__(self, top_position, room):
+        y, x = top_position
+        height = 1
+        while room.at((y + height, x)) == RoomTile.door:
+            height += 1
+
+        self.top_position = top_position
+        self.height = height
+        self.open = False
+        self.visible_in_dark = False
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['door']] = False
+
+    def add_to_state(self, state):
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        state[top_y + 1:top_y + self.height + 1, top_x, Env.channels['door']] = True
+
+    def draw(self, moving_data):
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        for y in range(top_y, top_y + self.height):
+            moving_data[y][top_x] = MovingObject.door
+
+    def update(self, player):
+        if self.open or InventoryItem.key not in player.inventory:
+            return
+        top_y, top_x = self.top_position
+        player_y, player_x = player.get_player_cell()
+        if abs(player_x - top_x) <= 1 and top_y <= player_y < top_y + self.height:
+            self.open = True
+            player.inventory.remove(InventoryItem.key)
+
+
+_inventory_item_to_channel = {
+    InventoryItem.key: Env.channels['key'],
+    InventoryItem.torch: Env.channels['torch'],
+    InventoryItem.amulet: Env.channels['amulet'],
+    InventoryItem.sword: Env.channels['sword'],
+}
+
+
+class CollectableItem:
+    def __init__(self, position, room, item_type):
+        self.position = position
+        self.collected = False
+        self.item_type = item_type
+        self.visible_in_dark = False
+
+    @staticmethod
+    def reset_state(state):
+        for channel in _inventory_item_to_channel.values():
+            state[:, :, channel] = False
+
+    def add_to_state(self, state):
+        if self.collected:
+            return
+        y, x = self.position
+        state[y + 1, x, _inventory_item_to_channel[self.item_type]] = True
+
+    def update(self, player):
+        if self.collected or player.is_inventory_full():
+            return
+        if player.get_player_cell() == self.position:
+            self.collected = True
+            player.collect(self.item_type)
+
+
+# TODO: unite with CollectableItem
+class Coin:
+    def __init__(self, position, room):
+        self.position = position
+        self.collected = False
+        self.visible_in_dark = False
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['coin']] = False
+
+    def add_to_state(self, state):
+        if self.collected:
+            return
+        y, x = self.position
+        state[y + 1, x, Env.channels['coin']] = True
+
+    def update(self, player):
+        if self.collected:
+            return
+        if player.get_player_cell() == self.position:
+            self.collected = True
+            player.score += 1000
+
+
+class LaserDoor:
+    opened_duration = 5
+    closed_duration = 10
+
+    def __init__(self, top_position, room):
+        y, x = top_position
+        height = 1
+        while room.at((y + height, x)) == RoomTile.laser_door:
+            height += 1
+
+        self.top_position = top_position
+        self.height = height
+        self.open = False
+        self.ticks_since_switched = 0
+        self.visible_in_dark = False
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['laser_door']] = False
+
+    def add_to_state(self, state):
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        state[top_y + 1:top_y + self.height + 1, top_x, Env.channels['laser_door']] = True
+
+    def draw(self, moving_data):
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        for y in range(top_y, top_y + self.height):
+            moving_data[y][top_x] = MovingObject.laser_door
+
+    def update(self, player):
+        self.ticks_since_switched += 1
+        should_switch = self.ticks_since_switched == (
+            LaserDoor.opened_duration if self.open else LaserDoor.closed_duration)
+        if should_switch:
+            self.open = not self.open
+            self.ticks_since_switched = 0
+
+        if self.open:
+            return
+        top_y, top_x = self.top_position
+        player_y, player_x = player.get_player_cell()
+        if player_x == top_x and top_y <= player_y < top_y + self.height:
+            player.die()
+
+
+class DisappearingWall:
+    present_duration = 10
+    absent_duration = 5
+
+    def __init__(self, position, room):
+        self.position = position
+        self.present = False
+        self.ticks_since_switched = 0
+        self.visible_in_dark = True
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['disappearing_wall']] = False
+
+    def add_to_state(self, state):
+        if not self.present:
+            return
+        y, x = self.position
+        state[y + 1, x, Env.channels['disappearing_wall']] = True
+
+    def draw(self, moving_data):
+        if not self.present:
+            return
+        y, x = self.position
+        moving_data[y][x] = MovingObject.disappearing_wall
+
+    def update(self, player):
+        self.ticks_since_switched += 1
+        should_switch = self.ticks_since_switched >= (
+            DisappearingWall.present_duration if self.present else DisappearingWall.absent_duration)
+        if should_switch:
+            self.present = not self.present
+            self.ticks_since_switched = 0
+
+
 class Enemy:
     _ticks_per_move = 2  # inverse of the speed of an enemy
 
@@ -973,6 +966,13 @@ class Enemy:
         self.ticks_since_move = 0
         self.previous_cell = None
         self.dead = False
+
+
+class PlayerState(Enum):
+    standing = 0
+    flying = 1
+    on_ladder = 2
+    above_ladder = 3
 
 
 def neighbour_cells(cell):
