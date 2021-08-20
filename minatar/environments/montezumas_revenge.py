@@ -32,7 +32,7 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 0.9
-    initial_room = 'room-35'  # TODO: change
+    initial_room = 'room-12'  # TODO: change
     treasure_room_walk_speed = 1
     score_per_coin = 1000
 
@@ -663,15 +663,15 @@ class Player:
         new_y, new_x = new_player_cell
 
         dy, dx = new_y - curr_y, new_x - curr_x
-        max_delta = max(dy, dx)
+        total_delta = abs(dy) + abs(dx)
         y, x = curr_y, curr_x
         crashed = False
-        for delta in range(1, max_delta):
-            print('! loop')
-            if dy != 0 and (y - curr_y) / dy < delta / max_delta:
-                y += np.sign(new_y - curr_y)
-            if dx != 0 and (x - curr_x) / dx < delta / max_delta:
+        for delta in range(1, total_delta):
+            if dx != 0 and (x - curr_x) / dx < delta / total_delta:
                 x += np.sign(new_x - curr_x)
+            else:
+                y += np.sign(new_y - curr_y)
+
             if not self._try_transitioning_to(np.array([y, x], dtype=np.float32), maze, action):
                 crashed = True
                 break
