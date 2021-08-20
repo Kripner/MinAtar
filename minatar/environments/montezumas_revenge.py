@@ -31,7 +31,7 @@ class Env:
     ladder_speed = 0.8
     moving_sand_speed = 0.5
     gravity = 0.3
-    jump_force = 1
+    jump_force = 0.9
     initial_room = 'room-12'  # TODO: change
     treasure_room_walk_speed = 1
     score_per_coin = 1000
@@ -41,7 +41,6 @@ class Env:
         self.channels = Env.channels
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Room.room_size[0], Room.room_size[1] + 1)  # one row contains the HUD
-        self.ignored_until_released = []
         self.maze = Maze(self)
         self.treasure_room = None
         self.player = Player()
@@ -67,7 +66,7 @@ class Env:
         self.trigger_screen_state_redraw()
 
     def act(self, action_num):
-        action = self._get_action(action_num)
+        action = Env.action_map[action_num]
         if self.game_state == GameState.in_maze:
             maze_event = self.maze.update(self.player, action)
             if maze_event == MazeEvent.player_died:
@@ -91,15 +90,6 @@ class Env:
             assert False
         self._update_screen_state(self.screen_state)
         return self._get_reward(), False  # reward, terminated
-
-    def _get_action(self, action_num):
-        action = Env.action_map[action_num]
-        if action in self.ignored_until_released:
-            self.ignored_until_released = [action]
-            return 'nop'
-        else:
-            self.ignored_until_released = []
-            return action
 
     def _get_reward(self):
         reward = self.player.score - self.last_score
@@ -173,11 +163,6 @@ class Env:
         elif action == 'l':  # load checkpoint
             if self.human_checkpoint is not None:
                 self._apply_checkpoint(self.human_checkpoint)
-
-    def ignore_until_released(self, *actions):
-        for action in actions:
-            if action not in self.ignored_until_released:
-                self.ignored_until_released.append(action)
 
 
 class GameState(Enum):
@@ -625,6 +610,7 @@ class Player:
         # For documentation purposes, overridden in reset() (which is called by the environment).
         self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, self.key_count, self.score = \
             None, None, None, None, None, None, None, None
+        self._ignored_until_released = []
 
     def reset(self, position):
         self.soft_reset(position)
@@ -661,72 +647,79 @@ class Player:
         self.player_pos = new_player_pos
 
     def update_inside_maze(self, action, maze):
-        curr_room = maze.room
-        y, x = self.get_player_cell()
+        if action in self._ignored_until_released:
+            self._ignored_until_released = [action]
+            action = 'nop'
+        else:
+            self._ignored_until_released = []
+
+        curr_y, curr_x = self.get_player_cell()
         new_player_pos = self._calculate_new_position(action, maze)
         new_player_cell = Env.position_to_cell(new_player_pos)
         new_y, new_x = new_player_cell
 
+        dy, dx = new_y - curr_y, new_x - curr_x
+        max_delta = max(dy, dx)
+        y, x = curr_y, curr_x
+        # print('curr: ', (curr_y, curr_x))
+        # print('max_delta: ', max_delta)
+        for delta in range(1, max_delta):
+            # print('loop')
+            if dy != 0 and (y - curr_y) / dy < delta / max_delta:
+                y += np.sign(new_y - curr_y)
+            if dx != 0 and (x - curr_x) / dx < delta / max_delta:
+                x += np.sign(new_x - curr_x)
+            if not self._try_transitioning_to((y, x), maze, action):
+                return
+        self._try_transitioning_to(new_player_pos, maze, action)
+        # print(self.player_state)
+
+    def _try_transitioning_to(self, new_player_pos, maze, action):
+        curr_room = maze.room
+        curr_y, curr_x = self.get_player_cell()
+        new_player_cell = Env.position_to_cell(new_player_pos)
+        new_y, new_x = new_player_cell
         crashed = False
         changed_room = False
         if not curr_room.is_inside(new_player_cell):
             changed_room = maze.try_changing_room(self, new_player_cell)
             crashed = not changed_room
-        elif not (new_x == x and new_y < y) and \
-                not curr_room.is_solid_at((y, x)) and \
+        elif not (new_x == curr_x and new_y < curr_y) and \
+                not curr_room.is_solid_at((curr_y, curr_x)) and \
                 curr_room.is_solid_at(new_player_cell):
             crashed = True
 
-        if not crashed and not changed_room:
-            self.player_pos = new_player_pos
-
         if crashed:
-            self.player_speed = np.array([0, 0], dtype=np.float32)
+            print(self.player_speed[0], end='')
+            if self.player_speed[0] > 1:
+                print(' -> died')
+            else:
+                print()
 
-    def _get_new_player_state(self, maze):
-        curr_room = maze.room
-        player_cell = self.get_player_cell()
-        cell_bellow = (player_cell[0] + 1, player_cell[1])
-
-        can_be_on_ladder = curr_room.at(player_cell) == RoomTile.ladder
-        can_stand = (not Room.is_inside(cell_bellow)) or \
-                    curr_room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or \
-                    (curr_room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder) or \
-                    curr_room.at_moving(cell_bellow) in [MovingObject.disappearing_wall, MovingObject.door]
-
-        if self.player_state == PlayerState.flying:
-            if can_be_on_ladder and not self.exiting_ladder:
-                maze.environment.ignore_until_released('left', 'right', 'jump')
-                return PlayerState.on_ladder
-            if can_stand:
-                return PlayerState.standing
-        if self.player_state == PlayerState.standing:
-            if not can_stand:
-                return PlayerState.flying
-        if self.player_state == PlayerState.on_ladder:
-            if self.exiting_ladder or not can_be_on_ladder:
-                self.exiting_ladder = False
-                return PlayerState.standing if can_stand else PlayerState.flying
-
-        if not can_be_on_ladder:
-            self.exiting_ladder = False
-        return self.player_state
+        transitioned = not crashed and not changed_room
+        if transitioned:
+            self.player_pos = new_player_pos
+        self.player_state = self._get_new_player_state(maze, action)
+        if not transitioned or self.player_state == PlayerState.on_ladder:
+            self.player_speed[0] = 0
+            return False
+        return True
 
     # Calculates new position of the player not counting in collisions.
     def _calculate_new_position(self, action, maze):
         # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
         # player was a single point.
-        self.player_state = self._get_new_player_state(maze)
-        if action in maze.environment.ignored_until_released:
-            action = 'nop'
+
+        # if action in self._ignored_until_released:
+        #     action = 'nop'
+        # print(self.player_state, self.exiting_ladder, action)
+        standing, on_ladder, flying = self._one_hot_state()
         player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
-        standing, on_ladder, flying = self._one_hot_state()
         curr_room = maze.room
 
         ladder_exiting_action = False
         if standing or on_ladder:
-            self.player_speed[0] = 0
             if action == 'jump':
                 self.player_speed[0] -= Env.jump_force
                 ladder_exiting_action = True
@@ -771,6 +764,158 @@ class Player:
                 new_player_pos[1] -= Env.moving_sand_speed
 
         return new_player_pos
+
+    def _get_new_player_state(self, maze, action):
+        curr_room = maze.room
+        player_cell = self.get_player_cell()
+        cell_bellow = (player_cell[0] + 1, player_cell[1])
+
+        can_be_on_ladder = curr_room.at(player_cell) == RoomTile.ladder
+        flying_up = self.player_speed[0] < -10e-3
+        can_stand = not flying_up and ((not Room.is_inside(cell_bellow)) or
+                                       curr_room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or
+                                       (curr_room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder) or
+                                       curr_room.at_moving(cell_bellow) in [MovingObject.disappearing_wall,
+                                                                            MovingObject.door])
+
+        if self.player_state == PlayerState.flying or (self.player_state == PlayerState.standing and action == 'up'):
+            if can_be_on_ladder and not self.exiting_ladder:
+                self._ignore_until_released('left', 'right', 'jump')
+                return PlayerState.on_ladder
+        if self.player_state == PlayerState.flying:
+            if can_stand:
+                return PlayerState.standing
+        if self.player_state == PlayerState.standing:
+            if not can_stand:
+                return PlayerState.flying
+        if self.player_state == PlayerState.on_ladder:
+            if self.exiting_ladder or not can_be_on_ladder:
+                self.exiting_ladder = False
+                return PlayerState.standing if can_stand else PlayerState.flying
+
+        if not can_be_on_ladder:
+            self.exiting_ladder = False
+        return self.player_state
+
+    def _ignore_until_released(self, *actions):
+        for action in actions:
+            if action not in self._ignored_until_released:
+                self._ignored_until_released.append(action)
+
+    # def update_inside_maze(self, action, maze):
+    #     curr_room = maze.room
+    #     y, x = self.get_player_cell()
+    #     new_player_pos = self._calculate_new_position(action, maze)
+    #     new_player_cell = Env.position_to_cell(new_player_pos)
+    #     new_y, new_x = new_player_cell
+    #
+    #     crashed = False
+    #     changed_room = False
+    #     if not curr_room.is_inside(new_player_cell):
+    #         changed_room = maze.try_changing_room(self, new_player_cell)
+    #         crashed = not changed_room
+    #     elif not (new_x == x and new_y < y) and \
+    #             not curr_room.is_solid_at((y, x)) and \
+    #             curr_room.is_solid_at(new_player_cell):
+    #         crashed = True
+    #
+    #     if not crashed and not changed_room:
+    #         self.player_pos = new_player_pos
+    #
+    #     # print(self.player_state, self.player_speed)
+    #     # if crashed:
+    #     # print(self.player_speed)
+    #     # self.player_speed = np.array([0, 0], dtype=np.float32)
+    #
+    # def _get_new_player_state(self, maze):
+    #     curr_room = maze.room
+    #     player_cell = self.get_player_cell()
+    #     cell_bellow = (player_cell[0] + 1, player_cell[1])
+    #
+    #     can_be_on_ladder = curr_room.at(player_cell) == RoomTile.ladder
+    #     can_stand = (not Room.is_inside(cell_bellow)) or \
+    #                 curr_room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or \
+    #                 (curr_room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder) or \
+    #                 curr_room.at_moving(cell_bellow) in [MovingObject.disappearing_wall, MovingObject.door]
+    #
+    #     if self.player_state == PlayerState.flying:
+    #         if can_be_on_ladder and not self.exiting_ladder:
+    #             maze.environment.ignore_until_released('left', 'right', 'jump')
+    #             return PlayerState.on_ladder
+    #         if can_stand:
+    #             return PlayerState.standing
+    #     if self.player_state == PlayerState.standing:
+    #         if not can_stand:
+    #             return PlayerState.flying
+    #     if self.player_state == PlayerState.on_ladder:
+    #         if self.exiting_ladder or not can_be_on_ladder:
+    #             self.exiting_ladder = False
+    #             return PlayerState.standing if can_stand else PlayerState.flying
+    #
+    #     if not can_be_on_ladder:
+    #         self.exiting_ladder = False
+    #     return self.player_state
+    #
+    # # Calculates new position of the player not counting in collisions.
+    # def _calculate_new_position(self, action, maze):
+    #     # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
+    #     # player was a single point.
+    #     self.player_state = self._get_new_player_state(maze)
+    #     if action in maze.environment.ignored_until_released:
+    #         action = 'nop'
+    #     player_cell = self.get_player_cell()
+    #     cell_bellow = (player_cell[0] + 1, player_cell[1])
+    #     standing, on_ladder, flying = self._one_hot_state()
+    #     curr_room = maze.room
+    #
+    #     ladder_exiting_action = False
+    #     if standing or on_ladder:
+    #         print(self.player_speed[0])
+    #         self.player_speed[0] = 0
+    #         if action == 'jump':
+    #             self.player_speed[0] -= Env.jump_force
+    #             ladder_exiting_action = True
+    #             self.player_state = PlayerState.flying
+    #
+    #     if flying:
+    #         self.player_speed[0] += Env.gravity
+    #
+    #     new_player_pos = self.player_pos + self.player_speed
+    #     if standing or on_ladder:
+    #         if action == 'left':
+    #             new_player_pos[1] -= Env.walking_speed
+    #             ladder_exiting_action = True
+    #         elif action == 'right':
+    #             new_player_pos[1] += Env.walking_speed
+    #             ladder_exiting_action = True
+    #
+    #     if flying:
+    #         if action == 'left':
+    #             new_player_pos[1] -= Env.lateral_jumping_speed
+    #         elif action == 'right':
+    #             new_player_pos[1] += Env.lateral_jumping_speed
+    #
+    #     if on_ladder:
+    #         if ladder_exiting_action:
+    #             self.exiting_ladder = True
+    #         else:
+    #             if action == 'up':
+    #                 new_player_pos[0] -= Env.ladder_speed
+    #             elif action == 'down':
+    #                 new_player_pos[0] += Env.ladder_speed
+    #
+    #     if standing:
+    #         if curr_room.at(cell_bellow) == RoomTile.ladder and action == 'down':
+    #             new_player_pos[0] += Env.ladder_speed
+    #             self.player_state = PlayerState.on_ladder
+    #         elif curr_room.at(player_cell) == RoomTile.ladder and action == 'up':
+    #             new_player_pos[0] -= Env.ladder_speed
+    #             self.player_state = PlayerState.on_ladder
+    #
+    #         if curr_room.at(cell_bellow) == RoomTile.moving_sand:
+    #             new_player_pos[1] -= Env.moving_sand_speed
+    #
+    #     return new_player_pos
 
     def _one_hot_state(self):
         return self.player_state == PlayerState.standing, self.player_state == PlayerState.on_ladder, \
