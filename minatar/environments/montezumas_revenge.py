@@ -32,7 +32,7 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 0.9
-    initial_room = 'room-12'  # TODO: change
+    initial_room = 'room-35'  # TODO: change
     treasure_room_walk_speed = 1
     score_per_coin = 1000
 
@@ -655,8 +655,8 @@ class Player:
             self._ignored_until_released = []
 
         curr_y, curr_x = self.get_player_cell()
-        self._update_player_speed(action)
-        new_player_pos = self._calculate_new_position(action, maze)
+        self._update_player_speed(maze, action)
+        new_player_pos = self._calculate_new_position(maze, action)
         new_player_cell = Env.position_to_cell(new_player_pos)
         new_y, new_x = new_player_cell
 
@@ -675,7 +675,6 @@ class Player:
         if not crashed:
             self._try_transitioning_to(new_player_pos, maze, action)
         self.player_state = self._get_new_player_state(maze, action)
-        print(self.player_state)
 
     def _try_transitioning_to(self, new_player_pos, maze, action):
         curr_room = maze.room
@@ -713,23 +712,21 @@ class Player:
             return False
         return True
 
-    def _update_player_speed(self, action):
+    def _update_player_speed(self, maze, action):
         standing, on_ladder, flying, above_ladder = self._one_hot_state()
         if standing or on_ladder or above_ladder:
             if action == 'jump':
                 self.player_speed[0] -= Env.jump_force
                 self.player_state = PlayerState.flying
+                if maze.room.at(self.get_player_cell()) == RoomTile.ladder:
+                    self.exiting_ladder = True
         elif flying:
             self.player_speed[0] += Env.gravity
 
     # Calculates new position of the player not counting in collisions.
-    def _calculate_new_position(self, action, maze):
+    def _calculate_new_position(self, maze, action):
         # Player's position has floating-point coordinates that get floored when displaying. Physics behaves as if the
         # player was a single point.
-
-        # if action in self._ignored_until_released:
-        #     action = 'nop'
-        # print(self.player_state, self.exiting_ladder, action)
         standing, on_ladder, flying, above_ladder = self._one_hot_state()
         player_cell = self.get_player_cell()
         cell_bellow = (player_cell[0] + 1, player_cell[1])
@@ -761,10 +758,6 @@ class Player:
             new_player_pos[0] += Env.ladder_speed
 
         if standing:
-            # elif curr_room.at(player_cell) == RoomTile.ladder and action == 'up':
-            #     new_player_pos[0] -= Env.ladder_speed
-            #     self.player_state = PlayerState.on_ladder
-
             if curr_room.at(cell_bellow) == RoomTile.moving_sand:
                 new_player_pos[1] -= Env.moving_sand_speed
 
@@ -777,7 +770,7 @@ class Player:
 
         can_be_on_ladder = curr_room.at(player_cell) == RoomTile.ladder
         flying_up = self.player_speed[0] < -10e-3
-        can_stand_on_ladder = curr_room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder
+        can_stand_on_ladder = not flying_up and curr_room.at(cell_bellow) == RoomTile.ladder and not can_be_on_ladder
         can_stand = not flying_up and ((not Room.is_inside(cell_bellow)) or
                                        curr_room.at(cell_bellow) in [RoomTile.wall, RoomTile.moving_sand] or
                                        can_stand_on_ladder or
@@ -806,6 +799,8 @@ class Player:
             if not can_stand:
                 return PlayerState.flying
         if self.player_state == PlayerState.on_ladder:
+            if can_stand:
+                return PlayerState.standing
             if not can_be_on_ladder and can_stand_on_ladder:
                 self.exiting_ladder = False
                 return PlayerState.above_ladder
@@ -813,7 +808,7 @@ class Player:
                 self.exiting_ladder = False
                 return PlayerState.standing if can_stand else PlayerState.flying
 
-        if not can_be_on_ladder:
+        if not can_be_on_ladder or can_stand or can_stand_on_ladder:
             self.exiting_ladder = False
         return self.player_state
 
