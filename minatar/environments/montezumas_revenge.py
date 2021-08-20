@@ -55,6 +55,7 @@ class Env:
     initial_room = 'room-35'  # TODO: change
     treasure_room_walk_speed = 1
     score_per_coin = 1000
+    amulet_duration = 50
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -239,8 +240,6 @@ class Maze:
     def _has_collided(self, player):
         player_cell = Env.position_to_cell(player.player_pos)
         if self.room.at(player_cell) == RoomTile.lava:
-            return True
-        if self.room.at_moving(player_cell) == MovingObject.enemy:
             return True
         return False
 
@@ -526,7 +525,7 @@ class CollectableItem:
             return
         if player.get_player_cell() == self.position:
             self.collected = True
-            player.inventory.append(self.item_type)
+            player.collect(self.item_type)
 
 
 # TODO: unite with CollectableItem
@@ -648,16 +647,18 @@ class Player:
 
     def __init__(self):
         # For documentation purposes, overridden in reset() (which is called by the environment).
-        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, self.key_count, self.inventory, self.score = \
-            None, None, None, None, None, None, None, None, None
+        self.player_speed, self.player_pos, self.player_state, self.exiting_ladder, self.health, self.dead, \
+            self.inventory, self.score, self.amulet_active, self.ticks_since_amulet_activated = \
+            None, None, None, None, None, None, None, None, None, None
         self._ignored_until_released = []
 
     def reset(self, position):
         self.soft_reset(position)
         self.health = Player._max_hearths
-        self.key_count = 0  # TODO: change to 0
         self.inventory = []
         self.score = 0
+        self.amulet_active = False
+        self.ticks_since_amulet_activated = 0  # only meaningful if self.amulet_active == True
 
     # called after player loses one hearth
     def soft_reset(self, position):
@@ -669,6 +670,20 @@ class Player:
 
     def is_inventory_full(self):
         return len(self.inventory) == Player._inventory_size
+
+    def collect(self, item):
+        if item == InventoryItem.amulet:
+            self.amulet_active = True
+            self.ticks_since_amulet_activated = 0
+        else:
+            self.inventory.append(item)
+
+    def _amulet_update(self):
+        if self.amulet_active:
+            self.ticks_since_amulet_activated += 1
+            if self.ticks_since_amulet_activated == Env.amulet_duration:
+                self.amulet_active = False
+                self.ticks_since_amulet_activated = 0
 
     def get_player_cell(self):
         return Env.position_to_cell(self.player_pos)
@@ -691,6 +706,7 @@ class Player:
         self.player_pos = new_player_pos
 
     def update_inside_maze(self, action, maze):
+        self._amulet_update()
         if action in self._ignored_until_released:
             self._ignored_until_released = [action]
             action = 'nop'
@@ -896,6 +912,8 @@ class Enemy:
             self.ticks_since_move = 0
         else:
             self.ticks_since_move += 1
+        if player.get_player_cell() == self.enemy_cell and not player.amulet_active:
+            player.die()
 
     def _move(self):
         path_neighbours = [c for c in neighbour_cells(self.enemy_cell) if
