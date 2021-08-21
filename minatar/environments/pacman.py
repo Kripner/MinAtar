@@ -49,17 +49,17 @@ def _step_in_direction(cell, direction):
 
 
 _tile_directions = {
-    LevelTile.left_right: [Direction.left, Direction.right],
-    LevelTile.up_down: [Direction.up, Direction.down],
-    LevelTile.down_right: [Direction.down, Direction.right],
-    LevelTile.up_right: [Direction.up, Direction.right],
-    LevelTile.left_up: [Direction.left, Direction.up],
-    LevelTile.left_down: [Direction.left, Direction.down],
-    LevelTile.left_up_right: [Direction.left, Direction.up, Direction.right],
-    LevelTile.up_right_down: [Direction.up, Direction.right, Direction.down],
-    LevelTile.right_down_left: [Direction.right, Direction.down, Direction.left],
-    LevelTile.down_left_up: [Direction.down, Direction.left, Direction.up],
-    LevelTile.left_up_right_down: [Direction.left, Direction.up, Direction.right, Direction.down],
+    LevelTile.left_right: {Direction.left, Direction.right},
+    LevelTile.up_down: {Direction.up, Direction.down},
+    LevelTile.down_right: {Direction.down, Direction.right},
+    LevelTile.up_right: {Direction.up, Direction.right},
+    LevelTile.left_up: {Direction.left, Direction.up},
+    LevelTile.left_down: {Direction.left, Direction.down},
+    LevelTile.left_up_right: {Direction.left, Direction.up, Direction.right},
+    LevelTile.up_right_down: {Direction.up, Direction.right, Direction.down},
+    LevelTile.right_down_left: {Direction.right, Direction.down, Direction.left},
+    LevelTile.down_left_up: {Direction.down, Direction.left, Direction.up},
+    LevelTile.left_up_right_down: {Direction.left, Direction.up, Direction.right, Direction.down},
 }
 
 
@@ -95,10 +95,15 @@ class WalkingEntity:
         return cell
 
 
-class Enemy:
-    def __init__(self, environment, start_cell):
-        self.env = environment
-        self.enemy_cell = start_cell
+class Enemy(WalkingEntity):
+    def __init__(self, random, level, start_cell, ticks_per_move):
+        self.random = random
+        super().__init__(level, start_cell, ticks_per_move, random.choice(Direction))
+
+    def update(self):
+        possible_directions = _tile_directions[self.level.at(self.cell)] - {self.direction}
+        self.direction = self.random.choice(list(possible_directions))
+        super().update()
 
 
 class Level:
@@ -167,7 +172,8 @@ class Env:
     tile_to_channel = {}
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     level_name = 'level'
-    ticks_per_move = 2
+    player_ticks_per_move = 2
+    enemy_ticks_per_move = 2
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -180,10 +186,10 @@ class Env:
         self.reset()
 
     def reset(self):
-        self.player = WalkingEntity(self.level, self.level.player_start, Env.ticks_per_move)
+        self.player = WalkingEntity(self.level, self.level.player_start, Env.player_ticks_per_move)
         self.enemies = []
         for enemy_start in self.level.enemies_starts:
-            self.enemies.append(Enemy(self, enemy_start))
+            self.enemies.append(Enemy(self.random, self.level, enemy_start, Env.enemy_ticks_per_move))
         self.screen_state = self._create_screen_state()
 
     def act(self, action_num):
@@ -194,6 +200,8 @@ class Env:
                 self.player.direction = new_direction
 
         self.player.update()
+        for enemy in self.enemies:
+            enemy.update()
         self._update_screen_state(self.screen_state)
         return 0, False
 
@@ -216,7 +224,7 @@ class Env:
 
         screen_state[self.player.cell[0] + 1, self.player.cell[1], Env.channels['player']] = True
         for enemy in self.enemies:
-            screen_state[enemy.enemy_cell[0] + 1, enemy.enemy_cell[1], Env.channels['enemy']] = True
+            screen_state[enemy.cell[0] + 1, enemy.cell[1], Env.channels['enemy']] = True
 
     def handle_human_action(self, action):
         pass
