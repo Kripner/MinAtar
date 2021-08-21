@@ -119,23 +119,41 @@ class Player(WalkingEntity):
         super().__init__(level, start_cell, ticks_per_move, Direction.right)
         self.health = start_health
         self.score = 0
+        self.power_pill_active = False
+        self.ticks_since_power_pill_activated = None  # Only meaningful if self.power_pill_active == True.
 
     def update(self, action):
+        if self.power_pill_active:
+            self.ticks_since_power_pill_activated += 1
+            if self.ticks_since_power_pill_activated == Env.power_pill_duration:
+                self.power_pill_active = False
+                self.ticks_since_power_pill_activated = None
+                print('deactivated')
+
         if action in _action_to_direction:
             new_direction = _action_to_direction[action]
             if new_direction in _tile_directions[self.level.at(self.cell)]:
                 self.direction = new_direction
         super().update_position()
+
         if self.level.is_coin_at(self.cell):
             self.level.collect_coin_at(self.cell)
             self.score += Env.score_per_coin
+        for power_pill in self.level.power_pills:
+            if power_pill == self.cell:
+                self.level.power_pills.remove(power_pill)
+                self.power_pill_active = True
+                self.ticks_since_power_pill_activated = 0
+                print('activated')
+                break
 
 
 class Level:
     level_size = (13, 20)  # height, width
 
-    def __init__(self, layout, enemies_starts, player_start):
-        self.layout, self.enemies_starts, self.player_start = layout, enemies_starts, player_start
+    def __init__(self, layout, enemies_starts, player_start, power_pills):
+        self.layout, self.enemies_starts, self.player_start, self.power_pills =\
+            layout, enemies_starts, player_start, power_pills
         self.coins = None
         self._initialize_coins(layout)
 
@@ -146,10 +164,19 @@ class Level:
                 if layout[row][col] != LevelTile.empty:
                     self.coins[row, col] = True
 
-    def initialize_state(self, screen_state):
+    def initialize_screen_state(self, screen_state):
         for col in range(Level.level_size[1]):
             for row in range(Level.level_size[0]):
                 screen_state[row, col, Env.tile_to_channel[self.layout[row][col]]] = True
+
+    def update_screen_state(self, screen_state):
+        for row in range(Level.level_size[0]):
+            for col in range(Level.level_size[1]):
+                screen_state[row, col, Env.channels['coin']] = self.coins[row, col]
+
+        screen_state[:, :, Env.channels['power_pill']] = False
+        for row, col in self.power_pills:
+            screen_state[row, col, Env.channels['power_pill']] = True
 
     def at(self, cell):
         return self.layout[cell[0]][cell[1]]
@@ -168,9 +195,10 @@ class Level:
             assert 'layout_file' in descriptor_data, 'level descriptor file must specify level layout file'
             layout_file = _get_file_location(descriptor_data['layout_file'])
             layout = Level._load_level_layout(layout_file)
-            enemies_starts = map(Level._position_array_to_tuple, descriptor_data['enemies_starts'])
+            enemies_starts = list(map(Level._position_array_to_tuple, descriptor_data['enemies_starts']))
             player_start = Level._position_array_to_tuple(descriptor_data['player_start'])
-            return Level(layout, enemies_starts, player_start)
+            power_pills = list(map(Level._position_array_to_tuple, descriptor_data['power_pills']))
+            return Level(layout, enemies_starts, player_start, power_pills)
 
     @staticmethod
     def _load_level_layout(layout_file):
@@ -193,22 +221,24 @@ def _get_file_location(file_name):
 
 class Env:
     channels = {
-        'empty': 0,
-        'left_right': 1,
-        'up_down': 2,
-        'down_right': 3,
-        'up_right': 4,
-        'left_up': 5,
-        'left_down': 6,
-        'left_up_right': 7,
-        'up_right_down': 8,
-        'right_down_left': 9,
-        'down_left_up': 10,
-        'left_up_right_down': 11,
-        'gauge_background': 12,
-        'gauge_health': 13,
-        'player': 14,
-        'enemy': 15
+        'coin': 0,
+        'power_pill': 1,
+        'empty': 2,
+        'left_right': 3,
+        'up_down': 4,
+        'down_right': 5,
+        'up_right': 6,
+        'left_up': 7,
+        'left_down': 8,
+        'left_up_right': 9,
+        'up_right_down': 10,
+        'right_down_left': 11,
+        'down_left_up': 12,
+        'left_up_right_down': 13,
+        'gauge_background': 14,
+        'gauge_health': 15,
+        'player': 16,
+        'enemy': 17
     }
     tile_to_channel = {}
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
@@ -217,6 +247,7 @@ class Env:
     enemy_ticks_per_move = 2
     player_max_health = 2
     score_per_coin = 1
+    power_pill_duration = 50
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -247,6 +278,7 @@ class Env:
         self.last_score = self.player.score
 
         if self._collision_occurred():
+            # TODO: check if power pill is active
             if self.player.health == 0:
                 return score_gain, True
             self._soft_reset()
@@ -274,7 +306,7 @@ class Env:
 
     def _create_screen_state(self):
         screen_state = np.zeros(self.state_shape(), dtype=bool)
-        self.level.initialize_state(screen_state[1:, :, :])
+        self.level.initialize_screen_state(screen_state[1:, :, :])
         screen_state[0, :, Env.channels['gauge_background']] = True
         self._update_screen_state(screen_state)
         return screen_state
@@ -288,6 +320,7 @@ class Env:
         screen_state[self.player.cell[0] + 1, self.player.cell[1], Env.channels['player']] = True
         for enemy in self.enemies:
             screen_state[enemy.cell[0] + 1, enemy.cell[1], Env.channels['enemy']] = True
+        self.level.update_screen_state(screen_state[1:, :, :])
 
     def handle_human_action(self, action):
         pass
