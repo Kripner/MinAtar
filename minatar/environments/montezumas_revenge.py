@@ -164,10 +164,14 @@ class Env:
         return np.array([cell[0] + 0.5, cell[1] + 0.5], dtype=np.float32)
 
     def _get_checkpoint(self):
-        return self.maze.get_checkpoint(self.player)
+        if self.game_state == GameState.in_maze:
+            return self.maze.get_checkpoint(self.player)
+        elif self.game_state == GameState.in_treasure_room:
+            return self.treasure_room.get_checkpoint(self.player)
+        assert False
 
     def _apply_checkpoint(self, checkpoint):
-        self.maze.apply_checkpoint(checkpoint, self.player)
+        checkpoint.apply_checkpoint(self)
         self.trigger_screen_state_redraw()
 
     def handle_human_action(self, action):
@@ -266,7 +270,7 @@ class Maze:
 
     def reset(self):
         self.rooms = RoomCache()
-        self._change_room(Env.initial_room)
+        self.change_room(Env.initial_room)
         assert self.room.player_start is not None, 'Initial room does not specify initial player position.'
         self.soft_reset_cell = self.room.player_start
 
@@ -329,7 +333,7 @@ class Maze:
             if next_neighbour_name == 'treasure_room':
                 self.pending_event = MazeEvent.entered_treasure_room
             else:
-                self._change_room(next_neighbour_name)
+                self.change_room(next_neighbour_name)
                 self.soft_reset_cell = next_location
                 self.pending_event = MazeEvent.changed_room
             player.player_pos = Env.cell_to_position(next_location)
@@ -337,10 +341,9 @@ class Maze:
             return True
         return False
 
-    def _change_room(self, lvl_name):
+    def change_room(self, lvl_name):
         self.room = self.rooms.get_room(lvl_name)
 
-    # TODO: PlayerCheckpoint, remove the argument
     def get_checkpoint(self, player):
         return MazeCheckpoint(
             room_name=self.room.room_name,
@@ -348,22 +351,32 @@ class Maze:
             player_pos=player.player_pos,
             player_speed=player.player_speed,
             player_state=player.player_state,
-            exiting_ladder=player.exiting_ladder
+            exiting_ladder=player.exiting_ladder,
+            player_health=player.health,
+            amulet_active=player.amulet_active,
+            ticks_since_amulet_activated=player.ticks_since_amulet_activated
         )
 
-    # TODO: PlayerCheckpoint, remove the argument
-    def apply_checkpoint(self, checkpoint, player):
-        self._change_room(checkpoint.room_name)
-        self.soft_reset_cell = checkpoint.soft_reset_cell
-        player.player_pos = checkpoint.player_pos
-        player.player_speed = checkpoint.player_speed
-        player.player_state = checkpoint.player_state
-        player.exiting_ladder = checkpoint.exiting_ladder
 
+class MazeCheckpoint:
+    def __init__(self, room_name, soft_reset_cell, player_pos, player_speed,
+                 player_state, exiting_ladder, player_health, amulet_active,
+                 ticks_since_amulet_activated):
+        self.room_name, self.soft_reset_cell, self.player_pos, self.player_speed, self.player_state, \
+        self.exiting_ladder, self.player_health, self.amulet_active, self.ticks_since_amulet_activated = \
+            room_name, soft_reset_cell, np.copy(player_pos), np.copy(player_speed), player_state, exiting_ladder,\
+            player_health, amulet_active, ticks_since_amulet_activated
 
-MazeCheckpoint = namedtuple('MazeCheckpoint',
-                            ['room_name', 'soft_reset_cell', 'player_pos', 'player_speed',
-                             'player_state', 'exiting_ladder'])
+    def apply_checkpoint(self, environment):
+        if environment.game_state == GameState.in_treasure_room:
+            environment.game_state = GameState.in_maze
+        maze, player = environment.maze, environment.player
+        maze.change_room(self.room_name)
+        maze.soft_reset_cell = self.soft_reset_cell
+        player.player_pos = self.player_pos
+        player.player_speed = self.player_speed
+        player.player_state = self.player_state
+        player.exiting_ladder = self.exiting_ladder
 
 
 class MazeEvent(Enum):
@@ -525,6 +538,30 @@ class TreasureRoom:
         screen_state[:, :, Env.channels['coin']] = False
         screen_state[self.coin_cell[0], self.coin_cell[1], Env.channels['coin']] = True
 
+    def get_checkpoint(self, player):
+        return TreasureRoomCheckpoint(
+            ticks_since_start=self.ticks_since_start,
+            coin_cell=self.coin_cell,
+            lava_cells=self.lava_cells,
+            player_pos=player.player_pos
+        )
+
+
+class TreasureRoomCheckpoint:
+    def __init__(self, ticks_since_start, coin_cell, lava_cells, player_pos):
+        self.ticks_since_start, self.coin_cell, self.lava_cells, self.player_pos =\
+            ticks_since_start, coin_cell, lava_cells, np.copy(player_pos)
+
+    def apply_checkpoint(self, environment):
+        if environment.game_state == GameState.in_maze:
+            environment.treasure_room = TreasureRoom(environment.random)
+            environment.game_state = GameState.in_treasure_room
+        treasure_room, player = environment.treasure_room, environment.player
+        treasure_room.ticks_since_start = self.ticks_since_start
+        treasure_room.coin_cell = self.coin_cell
+        treasure_room.lava_cells = self.lava_cells
+        player.player_pos = self.player_pos
+
 
 _item_collected_reward = {
     InventoryItem.key: Env.key_collected_reward,
@@ -596,7 +633,7 @@ class Player:
         self.dead = True
 
     def update_inside_treasure_room(self, action):
-        new_player_pos = self.player_pos
+        new_player_pos = np.copy(self.player_pos)
         if action == 'left':
             new_player_pos[1] -= Env.treasure_room_walk_speed
         if action == 'right':
