@@ -65,11 +65,18 @@ _tile_directions = {
 
 class WalkingEntity:
     def __init__(self, level, start_cell, ticks_per_move, start_direction):
-        self.level, self.cell = level, start_cell
-        self.ticks_since_moved = 0
+        self.level, self.start_cell = level, start_cell
         self.ticks_per_move = ticks_per_move
-        self.direction = start_direction
+        self.start_direction = start_direction
+        # Just for documentation, overridden in reset().
+        self.cell, self.previous_cell, self.direction, self.ticks_since_moved = None, None, None, None
+        self.reset()
+
+    def reset(self):
+        self.cell = self.start_cell
+        self.direction = self.start_direction
         self.previous_cell = None
+        self.ticks_since_moved = 0
 
     def update_position(self):
         if self.ticks_since_moved < self.ticks_per_move:
@@ -108,8 +115,9 @@ class Enemy(WalkingEntity):
 
 
 class Player(WalkingEntity):
-    def __init__(self, level, start_cell, ticks_per_move):
+    def __init__(self, level, start_cell, ticks_per_move, start_health):
         super().__init__(level, start_cell, ticks_per_move, Direction.right)
+        self.health = start_health
 
     def update(self, action):
         if action in _action_to_direction:
@@ -179,14 +187,16 @@ class Env:
         'down_left_up': 10,
         'left_up_right_down': 11,
         'gauge_background': 12,
-        'player': 13,
-        'enemy': 14
+        'gauge_health': 13,
+        'player': 14,
+        'enemy': 15
     }
     tile_to_channel = {}
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     level_name = 'level'
     player_ticks_per_move = 2
     enemy_ticks_per_move = 2
+    player_max_health = 2
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -199,7 +209,7 @@ class Env:
         self.reset()
 
     def reset(self):
-        self.player = Player(self.level, self.level.player_start, Env.player_ticks_per_move)
+        self.player = Player(self.level, self.level.player_start, Env.player_ticks_per_move, Env.player_max_health)
         self.enemies = []
         for enemy_start in self.level.enemies_starts:
             self.enemies.append(Enemy(self.random, self.level, enemy_start, Env.enemy_ticks_per_move))
@@ -211,7 +221,10 @@ class Env:
         for enemy in self.enemies:
             enemy.update()
         if self._collision_occurred():
-            return 0, True
+            if self.player.health == 0:
+                return 0, True
+            self._reset()
+            self.player.health -= 1
         self._update_screen_state(self.screen_state)
         return 0, False
 
@@ -221,6 +234,11 @@ class Env:
                     {enemy.cell, enemy.previous_cell} == {self.player.cell, self.player.previous_cell}:
                 return True
         return False
+
+    def _reset(self):
+        self.player.reset()
+        for enemy in self.enemies:
+            enemy.reset()
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
@@ -238,7 +256,9 @@ class Env:
     def _update_screen_state(self, screen_state):
         screen_state[:, :, Env.channels['player']] = False
         screen_state[:, :, Env.channels['enemy']] = False
+        screen_state[0, :, Env.channels['gauge_health']] = False
 
+        screen_state[0, :self.player.health, Env.channels['gauge_health']] = True
         screen_state[self.player.cell[0] + 1, self.player.cell[1], Env.channels['player']] = True
         for enemy in self.enemies:
             screen_state[enemy.cell[0] + 1, enemy.cell[1], Env.channels['enemy']] = True
