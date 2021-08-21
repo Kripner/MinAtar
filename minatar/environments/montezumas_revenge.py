@@ -262,7 +262,7 @@ class Maze:
         if self.room.at(new_player_cell) == RoomTile.lava:
             return True
         for enemy in self.room.enemies:
-            if {old_player_cell, new_player_cell} == {enemy.enemy_cell, enemy.previous_enemy_cell}:
+            if not enemy.dead and {old_player_cell, new_player_cell} == {enemy.enemy_cell, enemy.previous_enemy_cell}:
                 return True
         return False
 
@@ -599,6 +599,8 @@ class Player:
         if not crashed:
             self._try_transitioning_to(new_player_pos, maze, action)
         self.player_state = self._get_new_player_state(maze, action)
+        if self.player_state != PlayerState.flying:
+            self.player_speed[0] = 0
 
     def _try_transitioning_to(self, new_player_pos, maze, action):
         curr_room = maze.room
