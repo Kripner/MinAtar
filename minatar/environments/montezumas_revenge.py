@@ -214,7 +214,48 @@ class HUD:
             screen_state[0, width - i - 1, HUD._inventory_item_to_gauge_channel[item]] = True
 
 
+class MovingObject(Enum):
+    none = 0
+    enemy = 1
+    door = 2
+    laser_door = 3
+    disappearing_wall = 4
+
+
+class RoomTile(Enum):
+    empty = 0
+    wall = 1
+    player_start = 2
+    lava = 3
+    ladder = 4
+    enemy_path = 5
+    enemy_start = 6
+    moving_sand = 7
+    door = 8
+    key = 9
+    amulet = 10
+    sword = 11
+    torch = 12
+    laser_door = 13
+    disappearing_wall = 14
+    coin = 15
+    rolling_skull_endpoint = 16
+    bouncing_skull = 17
+    walking_spider_endpoint = 18
+    snake = 19
+
+
+_tile_to_channel = {
+    RoomTile.wall: 'wall',
+    RoomTile.lava: 'lava',
+    RoomTile.ladder: 'ladder',
+    RoomTile.moving_sand: 'moving_sand'
+}
+
+
 class Maze:
+    _tiles_visible_in_darkness = {RoomTile.lava}
+
     def __init__(self, environment):
         self.environment = environment
         # For documentation purposes, overridden in reset().
@@ -232,10 +273,10 @@ class Maze:
     def initialize_screen_state(self, screen_state, has_torch):
         for y in range(Room.room_size[1]):
             for x in range(Room.room_size[0]):
-                if self.room.is_dark and not has_torch:
+                tile = self.room.room_data[y][x]
+                if self.room.is_dark and not has_torch and tile not in Maze._tiles_visible_in_darkness:
                     channel = 'darkness'
                 else:
-                    tile = self.room.room_data[y][x]
                     if tile not in _tile_to_channel:
                         continue
                     channel = _tile_to_channel[tile]
@@ -1095,7 +1136,6 @@ class Enemy(ABC):
 
     def reset(self):
         self.dead = False
-        self.enemy_cell = None
         self.previous_enemy_cell = None
 
 
@@ -1334,45 +1374,6 @@ class RoomCache:
 
 def _get_file_location(file_name):
     return os.path.join('data/montezumas-revenge', file_name)
-
-
-class MovingObject(Enum):
-    none = 0
-    enemy = 1
-    door = 2
-    laser_door = 3
-    disappearing_wall = 4
-
-
-class RoomTile(Enum):
-    empty = 0
-    wall = 1
-    player_start = 2
-    lava = 3
-    ladder = 4
-    enemy_path = 5
-    enemy_start = 6
-    moving_sand = 7
-    door = 8
-    key = 9
-    amulet = 10
-    sword = 11
-    torch = 12
-    laser_door = 13
-    disappearing_wall = 14
-    coin = 15
-    rolling_skull_endpoint = 16
-    bouncing_skull = 17
-    walking_spider_endpoint = 18
-    snake = 19
-
-
-_tile_to_channel = {
-    RoomTile.wall: 'wall',
-    RoomTile.lava: 'lava',
-    RoomTile.ladder: 'ladder',
-    RoomTile.moving_sand: 'moving_sand'
-}
 
 
 def _hex(hexcode):
