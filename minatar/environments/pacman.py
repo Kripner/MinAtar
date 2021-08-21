@@ -64,13 +64,14 @@ _tile_directions = {
 
 
 class WalkingEntity:
-    def __init__(self, level, start_cell, ticks_per_move, start_direction=Direction.right):
+    def __init__(self, level, start_cell, ticks_per_move, start_direction):
         self.level, self.cell = level, start_cell
         self.ticks_since_moved = 0
         self.ticks_per_move = ticks_per_move
         self.direction = start_direction
+        self.previous_cell = None
 
-    def update(self):
+    def update_position(self):
         if self.ticks_since_moved < self.ticks_per_move:
             self.ticks_since_moved += 1
         curr_tile = self.level.at(self.cell)
@@ -79,7 +80,7 @@ class WalkingEntity:
             new_cell_wrapped = WalkingEntity._wrap_cell_around(new_cell)
             if self.level.at(new_cell_wrapped) != LevelTile.empty:
                 self.ticks_since_moved = 0
-                self.cell = new_cell_wrapped
+                self.previous_cell, self.cell = self.cell, new_cell_wrapped
 
     @staticmethod
     def _wrap_cell_around(cell):
@@ -103,7 +104,19 @@ class Enemy(WalkingEntity):
     def update(self):
         possible_directions = _tile_directions[self.level.at(self.cell)] - {self.direction}
         self.direction = self.random.choice(list(possible_directions))
-        super().update()
+        super().update_position()
+
+
+class Player(WalkingEntity):
+    def __init__(self, level, start_cell, ticks_per_move):
+        super().__init__(level, start_cell, ticks_per_move, Direction.right)
+
+    def update(self, action):
+        if action in _action_to_direction:
+            new_direction = _action_to_direction[action]
+            if new_direction in _tile_directions[self.level.at(self.cell)]:
+                self.direction = new_direction
+        super().update_position()
 
 
 class Level:
@@ -186,7 +199,7 @@ class Env:
         self.reset()
 
     def reset(self):
-        self.player = WalkingEntity(self.level, self.level.player_start, Env.player_ticks_per_move)
+        self.player = Player(self.level, self.level.player_start, Env.player_ticks_per_move)
         self.enemies = []
         for enemy_start in self.level.enemies_starts:
             self.enemies.append(Enemy(self.random, self.level, enemy_start, Env.enemy_ticks_per_move))
@@ -194,16 +207,20 @@ class Env:
 
     def act(self, action_num):
         action = Env.action_map[action_num]
-        if action in _action_to_direction:
-            new_direction = _action_to_direction[action]
-            if new_direction in _tile_directions[self.level.at(self.player.cell)]:
-                self.player.direction = new_direction
-
-        self.player.update()
+        self.player.update(action)
         for enemy in self.enemies:
             enemy.update()
+        if self._collision_occurred():
+            return 0, True
         self._update_screen_state(self.screen_state)
         return 0, False
+
+    def _collision_occurred(self):
+        for enemy in self.enemies:
+            if enemy.cell == self.player.cell or \
+                    {enemy.cell, enemy.previous_cell} == {self.player.cell, self.player.previous_cell}:
+                return True
+        return False
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
