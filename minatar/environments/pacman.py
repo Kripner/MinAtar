@@ -64,7 +64,7 @@ _tile_directions = {
 
 
 class WalkingEntity:
-    def __init__(self, level, start_cell, ticks_per_move=4, start_direction=Direction.right):
+    def __init__(self, level, start_cell, ticks_per_move, start_direction=Direction.right):
         self.level, self.cell = level, start_cell
         self.ticks_since_moved = 0
         self.ticks_per_move = ticks_per_move
@@ -167,6 +167,7 @@ class Env:
     tile_to_channel = {}
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     level_name = 'level'
+    ticks_per_move = 2
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -179,7 +180,7 @@ class Env:
         self.reset()
 
     def reset(self):
-        self.player = WalkingEntity(self.level, self.level.player_start)
+        self.player = WalkingEntity(self.level, self.level.player_start, Env.ticks_per_move)
         self.enemies = []
         for enemy_start in self.level.enemies_starts:
             self.enemies.append(Enemy(self, enemy_start))
