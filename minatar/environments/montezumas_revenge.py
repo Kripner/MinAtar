@@ -43,6 +43,8 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 0.9
+    # How hard player has to hit the ground to die.
+    lethal_impact_force = 1
     initial_room = 'room-35'  # TODO: change
     treasure_room_walk_speed = 1
     amulet_duration = 50
@@ -654,7 +656,7 @@ class Player:
         else:
             self._ignored_until_released = []
 
-        print(self.player_state, self.player_pos, self.player_speed, action)
+        print(self.player_state, self.player_pos, self.player_speed, action)  # TODO: remove
         curr_y, curr_x = self.get_player_cell()
         self._update_player_speed(maze, action)
         new_player_pos = self._calculate_new_position(maze, action)
@@ -677,8 +679,8 @@ class Player:
         if not crashed:
             self._try_transitioning_to(new_player_pos, maze, action)
         self.player_state = self._get_new_player_state(maze, action)
-        if self.player_state != PlayerState.flying:
-            self.player_speed[0] = 0
+        # if self.player_state != PlayerState.flying:
+        #     self.player_speed[0] = 0
 
     def _try_transitioning_to(self, new_player_pos, maze, action):
         curr_room = maze.room
@@ -701,11 +703,8 @@ class Player:
             crashed = True
 
         if crashed:
-            print(self.player_speed[0], end='')
-            if self.player_speed[0] > 1:
-                print(' -> died')
-            else:
-                print()
+            if self.player_speed[0] > Env.lethal_impact_force:
+                self.die()
 
         transitioned = not crashed and not changed_room
         if transitioned:
@@ -788,6 +787,8 @@ class Player:
                 self._ignore_until_released('left', 'right', 'jump')
                 return PlayerState.on_ladder
         if self.player_state == PlayerState.flying:
+            # if (can_stand_on_ladder or can_stand) and self.player_speed[0] > Env.lethal_impact_force:
+            #     self.die()
             if can_stand_on_ladder:
                 return PlayerState.above_ladder
             if can_stand:
