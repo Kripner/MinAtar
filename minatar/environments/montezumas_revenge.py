@@ -1,3 +1,4 @@
+from abc import ABC
 from enum import Enum
 from collections import namedtuple
 import numpy as np
@@ -38,6 +39,9 @@ class Env:
         'torch': 19,
         'amulet': 20,
         'coin': 21,
+        'skull': 22,
+        'spider': 23,
+        'snake': 24
     }
     action_map = ['nop', 'left', 'up', 'right', 'down', 'jump']
     walking_speed = 1
@@ -46,10 +50,12 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 0.9
-    initial_room = 'room-35'  # TODO: change
+    initial_room = 'room-13'  # TODO: change
     treasure_room_walk_speed = 1
     score_per_coin = 1000
     amulet_duration = 50
+    skull_killed_reward = 2000
+    spider_killed_reward = 3000
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -327,10 +333,14 @@ class Room:
         assert len(player_starts) <= 1
         self.player_start = player_starts[0] if len(player_starts) == 1 else None
 
-        self.moving_objects = Enemy.detect_all(room_data, self) + \
+        self.moving_objects = GenericEnemy.detect_all(room_data, self) + \
                               Door.detect_all(room_data) + \
                               LaserDoor.detect_all(room_data) + \
-                              DisappearingWall.detect_all(room_data)
+                              DisappearingWall.detect_all(room_data) + \
+                              RollingSkull.detect_all(room_data) + \
+                              WalkingSpider.detect_all(room_data) + \
+                              Snake.detect_all(room_data) + \
+                              BouncingSkull.detect_all(room_data)
         self.scriptable_objects = self.moving_objects + \
                                   Coin.detect_all(room_data) + \
                                   CollectableItem.detect_all(room_data)
@@ -353,12 +363,16 @@ class Room:
         self.moving_data = moving_data
 
     def update_screen_state(self, state, has_torch):
-        Enemy.reset_state(state)
+        GenericEnemy.reset_state(state)
         Door.reset_state(state)
         CollectableItem.reset_state(state)
         LaserDoor.reset_state(state)
         DisappearingWall.reset_state(state)
         Coin.reset_state(state)
+        RollingSkull.reset_state(state)
+        WalkingSpider.reset_state(state)
+        Snake.reset_state(state)
+        BouncingSkull.reset_state(state)
 
         for o in self.scriptable_objects:
             if not self.is_dark or has_torch or o.visible_in_dark:
@@ -907,7 +921,7 @@ class DisappearingWall:
             self.ticks_since_switched = 0
 
 
-class Enemy:
+class GenericEnemy:
     _ticks_per_move = 2  # inverse of the speed of an enemy
 
     def __init__(self, starting_cell, room):
@@ -920,7 +934,7 @@ class Enemy:
 
     @staticmethod
     def detect_all(room_data, room):
-        return [Enemy((y, x), room) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+        return [GenericEnemy((y, x), room) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
                 if room_data[y][x] == RoomTile.enemy_start]
 
     @staticmethod
@@ -942,7 +956,7 @@ class Enemy:
         if self.dead:
             return
 
-        if self.ticks_since_move + 1 == Enemy._ticks_per_move:
+        if self.ticks_since_move + 1 == GenericEnemy._ticks_per_move:
             self._move()
             self.ticks_since_move = 0
         else:
@@ -977,6 +991,204 @@ class Enemy:
         self.ticks_since_move = 0
         self.previous_cell = None
         self.dead = False
+
+
+class Enemy(ABC):
+    def __init__(self, is_killable):
+        self.visible_in_dark = True
+        self.is_killable = is_killable
+        # For documentation purposes, overridden in reset().
+        self.enemy_cell, self.dead = None, None
+
+    def _get_channel(self):
+        raise NotImplementedError('abstract method')
+
+    def add_to_state(self, state):
+        if self.dead:
+            return
+        state[self.enemy_cell[0] + 1, self.enemy_cell[1], self._get_channel()] = True
+
+    def draw(self, moving_data):
+        if self.dead:
+            return
+        y, x = self.enemy_cell
+        moving_data[y][x] = MovingObject.enemy
+
+    def update(self, player):
+        if self.dead:
+            return
+        if player.get_player_cell() == self.enemy_cell and not player.amulet_active:
+            if self.is_killable and player.has_sword():
+                player.use_sword()
+                self._die()
+                self._handle_killed(player)
+            else:
+                self._die()
+                player.die()
+
+    def _handle_killed(self, player):
+        pass
+
+    def _die(self):
+        self.dead = True
+
+    def reset(self):
+        self.dead = False
+
+
+class MovingEnemy(Enemy, ABC):
+    def __init__(self, ticks_per_move, is_killable):
+        super().__init__(is_killable)
+        self.ticks_per_move = ticks_per_move
+        # For documentation purposes, overridden in reset().
+        self.ticks_since_move = None
+
+    def update(self, player):
+        super().update(player)
+        if self.ticks_since_move + 1 == self.ticks_per_move:
+            self._move()
+            self.ticks_since_move = 0
+        else:
+            self.ticks_since_move += 1
+
+    def _move(self):
+        raise NotImplementedError('abstract method')
+
+    def reset(self):
+        super().reset()
+        self.ticks_since_move = 0
+
+
+class PatrollingEnemy(MovingEnemy, ABC):
+    def __init__(self, start_cell, end_cell, ticks_per_move, is_killable):
+        super().__init__(ticks_per_move, is_killable)
+        assert start_cell != end_cell
+
+        start_y, start_x = start_cell
+        end_y, end_x = end_cell
+        dy, dx = end_y - start_y, end_x - start_x
+        total_delta = abs(dy) + abs(dx)
+        y, x = start_y, start_x
+        path = [start_cell]
+        for delta in range(1, total_delta + 1):
+            if dx != 0 and (x - start_x) / dx < delta / total_delta:
+                x += np.sign(dx)
+            else:
+                y += np.sign(dy)
+            path.append((y, x))
+        self.path = path
+
+        # For documentation purposes, overridden in reset().
+        self.moving_start_to_end, self.curr_path_idx = None, None
+
+    def _move(self):
+        if self.moving_start_to_end:
+            self.curr_path_idx += 1
+        else:
+            self.curr_path_idx -= 1
+
+        if self.curr_path_idx in [0, len(self.path) - 1]:
+            self.moving_start_to_end = not self.moving_start_to_end
+        self.enemy_cell = self.path[self.curr_path_idx]
+
+    def reset(self):
+        super().reset()
+        self.moving_start_to_end = True
+        self.curr_path_idx = 0
+        self.enemy_cell = self.path[0]
+
+    @staticmethod
+    def _detect_all_patrolling(room_data, tile_type, constructor):
+        endpoints = [(y, x) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                     if room_data[y][x] == tile_type]
+        if len(endpoints) == 2:
+            return [constructor(*endpoints)]
+        elif len(endpoints) == 0:
+            return []
+        assert False
+
+
+class RollingSkull(PatrollingEnemy):
+    def __init__(self, start_cell, end_cell):
+        super().__init__(start_cell, end_cell, ticks_per_move=2, is_killable=True)
+        self.reset()
+
+    def _handle_killed(self, player):
+        player.score += Env.skull_killed_reward
+
+    @staticmethod
+    def detect_all(room_data):
+        return PatrollingEnemy._detect_all_patrolling(room_data, RoomTile.rolling_skull_endpoint, RollingSkull)
+
+    def _get_channel(self):
+        return Env.channels['skull']
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['skull']] = False
+
+
+class WalkingSpider(PatrollingEnemy):
+    def __init__(self, start_cell, end_cell):
+        super().__init__(start_cell, end_cell, ticks_per_move=2, is_killable=True)
+        self.reset()
+
+    def _handle_killed(self, player):
+        player.score += Env.spider_killed_reward
+
+    @staticmethod
+    def detect_all(room_data):
+        return PatrollingEnemy._detect_all_patrolling(room_data, RoomTile.walking_spider_endpoint, WalkingSpider)
+
+    def _get_channel(self):
+        return Env.channels['spider']
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['spider']] = False
+
+
+class Snake(Enemy):
+    def __init__(self, enemy_cell):
+        super().__init__(is_killable=False)
+        self.enemy_cell = enemy_cell
+        self.reset()
+
+    @staticmethod
+    def detect_all(room_data):
+        return [Snake((y, x)) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                if room_data[y][x] == RoomTile.snake]
+
+    def _get_channel(self):
+        return Env.channels['snake']
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['snake']] = False
+
+
+class BouncingSkull(Enemy):
+    def __init__(self, start_cell):
+        super().__init__(is_killable=True)
+        self.start_cell = start_cell
+        self.reset()
+
+    def _handle_killed(self, player):
+        player.score += Env.skull_killed_reward
+
+    # TODO: movement
+
+    @staticmethod
+    def detect_all(room_data):
+        return [BouncingSkull((y, x)) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                if room_data[y][x] == RoomTile.bouncing_skull]
+
+    def _get_channel(self):
+        return Env.channels['skull']
+
+    @staticmethod
+    def reset_state(state):
+        state[:, :, Env.channels['skull']] = False
 
 
 class PlayerState(Enum):
@@ -1057,6 +1269,10 @@ class RoomTile(Enum):
     laser_door = 13
     disappearing_wall = 14
     coin = 15
+    rolling_skull_endpoint = 16
+    bouncing_skull = 17
+    walking_spider_endpoint = 18
+    snake = 19
 
 
 _tile_to_channel = {
@@ -1087,5 +1303,9 @@ _color_to_tile = {
     _hex(0xaaaf97): RoomTile.torch,
     _hex(0x584052): RoomTile.laser_door,
     _hex(0x626262): RoomTile.disappearing_wall,
-    _hex(0xff9400): RoomTile.coin
+    _hex(0xff9400): RoomTile.coin,
+    _hex(0x5e004c): RoomTile.rolling_skull_endpoint,
+    _hex(0x1085a1): RoomTile.bouncing_skull,
+    _hex(0x608b96): RoomTile.walking_spider_endpoint,
+    _hex(0x187565): RoomTile.snake,
 }
