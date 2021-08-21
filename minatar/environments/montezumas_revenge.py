@@ -588,7 +588,8 @@ class Player:
         self.soft_reset(position)
         self.health = Player._max_hearths
         # self.inventory = []
-        self.inventory = [InventoryItem.key] * 3  # TODO
+        # self.inventory = [InventoryItem.key] * 3  # TODO
+        self.inventory = []
         self.score = 0
         self.amulet_active = False
         self.ticks_since_amulet_activated = 0  # only meaningful if self.amulet_active == True
