@@ -8,13 +8,6 @@ from PIL import Image
 import math
 
 
-class InventoryItem(Enum):
-    torch = 0
-    amulet = 1
-    key = 2
-    sword = 3
-
-
 class Env:
     channels = {
         'darkness': 0,
@@ -52,10 +45,15 @@ class Env:
     jump_force = 0.9
     initial_room = 'room-13'  # TODO: change
     treasure_room_walk_speed = 1
-    score_per_coin = 1000
     amulet_duration = 50
     skull_killed_reward = 2000
     spider_killed_reward = 3000
+    key_collected_reward = 50
+    sword_collected_reward = 50
+    amulet_collected_reward = 100
+    coin_collected_reward = 1000
+    torch_collected_reward = 3000
+    door_opened_reward = 300
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -180,6 +178,13 @@ class Env:
 class GameState(Enum):
     in_maze = 0
     in_treasure_room = 1
+
+
+class InventoryItem(Enum):
+    torch = 0
+    amulet = 1
+    key = 2
+    sword = 3
 
 
 class HUD:
@@ -418,7 +423,7 @@ class TreasureRoom:
         player.update_inside_treasure_room(action)
         player_cell = player.get_player_cell()
         if player_cell == self.coin_cell:
-            player.score += Env.score_per_coin
+            player.score += Env.coin_collected_reward
             while player_cell == self.coin_cell:
                 self._randomize_coin_position()
 
@@ -435,6 +440,13 @@ class TreasureRoom:
         screen_state[:, :, Env.channels['coin']] = False
         screen_state[self.coin_cell[0], self.coin_cell[1], Env.channels['coin']] = True
 
+
+_item_collected_reward = {
+    InventoryItem.key: Env.key_collected_reward,
+    InventoryItem.sword: Env.sword_collected_reward,
+    InventoryItem.torch: Env.torch_collected_reward,
+    InventoryItem.amulet: Env.amulet_collected_reward
+}
 
 class Player:
     _max_hearths = 5
@@ -482,6 +494,7 @@ class Player:
             self.ticks_since_amulet_activated = 0
         else:
             self.inventory.append(item)
+        self.score += _item_collected_reward[item]
 
     def _amulet_update(self):
         if self.amulet_active:
@@ -740,6 +753,7 @@ class Door:
         if abs(player_x - top_x) <= 1 and top_y <= player_y < top_y + self.height:
             self.open = True
             player.inventory.remove(InventoryItem.key)
+            player.score += Env.door_opened_reward
 
 
 _inventory_item_to_channel = {
@@ -819,7 +833,7 @@ class Coin:
             return
         if player.get_player_cell() == self.position:
             self.collected = True
-            player.score += 1000
+            player.score += Env.coin_collected_reward
 
 
 class LaserDoor:
