@@ -1059,25 +1059,11 @@ class MovingEnemy(Enemy, ABC):
         self.ticks_since_move = 0
 
 
-class PatrollingEnemy(MovingEnemy, ABC):
-    def __init__(self, start_cell, end_cell, ticks_per_move, is_killable):
+class PathFollowingEnemy(MovingEnemy, ABC):
+    def __init__(self, path, ticks_per_move, is_killable):
         super().__init__(ticks_per_move, is_killable)
-        assert start_cell != end_cell
-
-        start_y, start_x = start_cell
-        end_y, end_x = end_cell
-        dy, dx = end_y - start_y, end_x - start_x
-        total_delta = abs(dy) + abs(dx)
-        y, x = start_y, start_x
-        path = [start_cell]
-        for delta in range(1, total_delta + 1):
-            if dx != 0 and (x - start_x) / dx < delta / total_delta:
-                x += np.sign(dx)
-            else:
-                y += np.sign(dy)
-            path.append((y, x))
+        assert len(path) >= 2
         self.path = path
-
         # For documentation purposes, overridden in reset().
         self.moving_start_to_end, self.curr_path_idx = None, None
 
@@ -1096,6 +1082,24 @@ class PatrollingEnemy(MovingEnemy, ABC):
         self.moving_start_to_end = True
         self.curr_path_idx = 0
         self.enemy_cell = self.path[0]
+
+
+class PatrollingEnemy(PathFollowingEnemy, ABC):
+    def __init__(self, start_cell, end_cell, ticks_per_move, is_killable):
+        assert start_cell != end_cell
+        start_y, start_x = start_cell
+        end_y, end_x = end_cell
+        dy, dx = end_y - start_y, end_x - start_x
+        total_delta = abs(dy) + abs(dx)
+        y, x = start_y, start_x
+        path = [start_cell]
+        for delta in range(1, total_delta + 1):
+            if dx != 0 and (x - start_x) / dx < delta / total_delta:
+                x += np.sign(dx)
+            else:
+                y += np.sign(dy)
+            path.append((y, x))
+        super().__init__(path, ticks_per_move, is_killable)
 
     @staticmethod
     def _detect_all_patrolling(room_data, tile_type, constructor):
@@ -1167,21 +1171,45 @@ class Snake(Enemy):
         state[:, :, Env.channels['snake']] = False
 
 
-class BouncingSkull(Enemy):
-    def __init__(self, start_cell):
-        super().__init__(is_killable=True)
-        self.start_cell = start_cell
+class BouncingSkull(PathFollowingEnemy):
+    _hill = ['up', 'right', 'up', 'right', 'down', 'right', 'down', 'right', 'right']
+    _bouncing_path = _hill * 3 + ['up', 'right', 'up']
+
+    def __init__(self, start_cell, starting_left_to_right):
+        path_description = BouncingSkull._bouncing_path \
+            if starting_left_to_right \
+            else reversed(BouncingSkull._bouncing_path)
+        y, x = start_cell
+        path = [start_cell]
+        reversing_coefficient = 1 if starting_left_to_right else -1
+        for step in path_description:
+            if step == 'up':
+                y -= 1 * reversing_coefficient
+            elif step == 'right':
+                x += 1 * reversing_coefficient
+            elif step == 'down':
+                y += 1 * reversing_coefficient
+            elif step == 'left':
+                x -= 1 * reversing_coefficient
+            path.append((y, x))
+        super().__init__(path, ticks_per_move=2, is_killable=True)
         self.reset()
 
     def _handle_killed(self, player):
         player.score += Env.skull_killed_reward
 
-    # TODO: movement
-
     @staticmethod
     def detect_all(room_data):
-        return [BouncingSkull((y, x)) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
-                if room_data[y][x] == RoomTile.bouncing_skull]
+        starts = [(y, x) for y in range(Room.room_size[1]) for x in range(Room.room_size[0])
+                  if room_data[y][x] == RoomTile.bouncing_skull]
+        skulls = []
+        for start in starts:
+            y, x = start
+            # A bit of a hack/simplification. Works for both instances of the bouncing skulls in
+            # Montezuma's maze.
+            going_left_to_right = x < Room.room_size[0] / 2
+            skulls.append(BouncingSkull(start, going_left_to_right))
+        return skulls
 
     def _get_channel(self):
         return Env.channels['skull']
