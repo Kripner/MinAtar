@@ -223,15 +223,16 @@ class Env:
         self.channels = Env.channels
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.level_size[0] + 1, Level.level_size[1])  # 1 row for the HUD
-        self.level = Level.load_level(Env.level_name)
-        self.last_score = 0
         # Just for documentation, overridden in reset().
-        self.screen_state, self.player, self.player_pos_inside_cell, self.enemies = None, None, None, None
-        self.soft_reset()
+        self.level, self.screen_state, self.player, self.player_pos_inside_cell, self.enemies, self.last_score = \
+            None, None, None, None, None, None
+        self.reset()
 
     # Called after player loses one hearth.
-    def soft_reset(self):
+    def reset(self):
+        self.level = Level.load_level(Env.level_name)
         self.player = Player(self.level, self.level.player_start, Env.player_ticks_per_move, Env.player_max_health)
+        self.last_score = 0
         self.enemies = []
         for enemy_start in self.level.enemies_starts:
             self.enemies.append(Enemy(self.random, self.level, enemy_start, Env.enemy_ticks_per_move))
@@ -248,7 +249,7 @@ class Env:
         if self._collision_occurred():
             if self.player.health == 0:
                 return score_gain, True
-            self._reset()
+            self._soft_reset()
             self.player.health -= 1
         self._update_screen_state(self.screen_state)
         return score_gain, False
@@ -260,7 +261,7 @@ class Env:
                 return True
         return False
 
-    def _reset(self):
+    def _soft_reset(self):
         self.player.reset_walking_entity()
         for enemy in self.enemies:
             enemy.reset_walking_entity()
