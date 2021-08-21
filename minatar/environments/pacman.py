@@ -27,6 +27,14 @@ class Direction(Enum):
     down = 3
 
 
+_action_to_direction = {
+    'left': Direction.left,
+    'up': Direction.up,
+    'right': Direction.right,
+    'down': Direction.down
+}
+
+
 def _step_in_direction(cell, direction):
     row, col = cell
     if direction == Direction.left:
@@ -179,6 +187,10 @@ class Env:
 
     def act(self, action_num):
         action = Env.action_map[action_num]
+        if action in _action_to_direction:
+            new_direction = _action_to_direction[action]
+            if new_direction in _tile_directions[self.level.at(self.player.cell)]:
+                self.player.direction = new_direction
 
         self.player.update()
         self._update_screen_state(self.screen_state)
@@ -201,9 +213,9 @@ class Env:
         screen_state[:, :, Env.channels['player']] = False
         screen_state[:, :, Env.channels['enemy']] = False
 
-        screen_state[self.player.cell[0], self.player.cell[1], Env.channels['player']] = True
+        screen_state[self.player.cell[0] + 1, self.player.cell[1], Env.channels['player']] = True
         for enemy in self.enemies:
-            screen_state[enemy.enemy_cell[0], enemy.enemy_cell[1], Env.channels['enemy']] = True
+            screen_state[enemy.enemy_cell[0] + 1, enemy.enemy_cell[1], Env.channels['enemy']] = True
 
     def handle_human_action(self, action):
         pass
