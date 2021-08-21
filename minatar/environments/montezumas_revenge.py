@@ -43,7 +43,7 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 0.9
-    initial_room = 'room-2'  # TODO: change
+    initial_room = 'room-35'  # TODO: change
     treasure_room_walk_speed = 1
     amulet_duration = 50
     skull_killed_reward = 2000
@@ -245,9 +245,10 @@ class Maze:
         self.room.update_screen_state(screen_state, has_torch)
 
     def update(self, player, action):
+        old_player_pos = player.player_pos
         player.update_inside_maze(action, self)
         self.room.update(player)
-        if player.dead or self._has_collided(player):
+        if player.dead or self._has_collided(old_player_pos, player.player_pos):
             return MazeEvent.player_died
         if self.pending_event is not None:
             event = self.pending_event
@@ -255,10 +256,14 @@ class Maze:
             return event
         return None
 
-    def _has_collided(self, player):
-        player_cell = Env.position_to_cell(player.player_pos)
-        if self.room.at(player_cell) == RoomTile.lava:
+    def _has_collided(self, old_player_pos, new_player_pos):
+        old_player_cell = Env.position_to_cell(old_player_pos)
+        new_player_cell = Env.position_to_cell(new_player_pos)
+        if self.room.at(new_player_cell) == RoomTile.lava:
             return True
+        for enemy in self.room.enemies:
+            if {old_player_cell, new_player_cell} == {enemy.enemy_cell, enemy.previous_enemy_cell}:
+                return True
         return False
 
     def try_changing_room(self, player, new_player_cell):
@@ -342,14 +347,15 @@ class Room:
         assert len(player_starts) <= 1
         self.player_start = player_starts[0] if len(player_starts) == 1 else None
 
+        self.enemies = RollingSkull.detect_all(room_data) + \
+                       WalkingSpider.detect_all(room_data) + \
+                       Snake.detect_all(room_data) + \
+                       BouncingSkull.detect_all(room_data)
         self.moving_objects = GenericEnemy.detect_all(room_data, self) + \
                               Door.detect_all(room_data) + \
                               LaserDoor.detect_all(room_data) + \
                               DisappearingWall.detect_all(room_data) + \
-                              RollingSkull.detect_all(room_data) + \
-                              WalkingSpider.detect_all(room_data) + \
-                              Snake.detect_all(room_data) + \
-                              BouncingSkull.detect_all(room_data)
+                              self.enemies
         self.scriptable_objects = self.moving_objects + \
                                   Coin.detect_all(room_data) + \
                                   CollectableItem.detect_all(room_data)
@@ -1051,7 +1057,7 @@ class Enemy(ABC):
         self.visible_in_dark = True
         self.is_killable = is_killable
         # For documentation purposes, overridden in reset().
-        self.enemy_cell, self.dead = None, None
+        self.enemy_cell, self.dead, self.previous_enemy_cell = None, None, None
 
     def _get_channel(self):
         raise NotImplementedError('abstract method')
@@ -1087,6 +1093,8 @@ class Enemy(ABC):
 
     def reset(self):
         self.dead = False
+        self.enemy_cell = None
+        self.previous_enemy_cell = None
 
 
 class MovingEnemy(Enemy, ABC):
@@ -1097,12 +1105,13 @@ class MovingEnemy(Enemy, ABC):
         self.ticks_since_move = None
 
     def update(self, player):
-        super().update(player)
         if self.ticks_since_move + 1 == self.ticks_per_move:
+            self.previous_enemy_cell = self.enemy_cell
             self._move()
             self.ticks_since_move = 0
         else:
             self.ticks_since_move += 1
+        super().update(player)
 
     def _move(self):
         raise NotImplementedError('abstract method')
