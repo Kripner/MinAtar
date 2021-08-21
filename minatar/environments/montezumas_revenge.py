@@ -43,7 +43,7 @@ class Env:
     moving_sand_speed = 0.5
     gravity = 0.3
     jump_force = 0.9
-    initial_room = 'room-13'  # TODO: change
+    initial_room = 'room-2'  # TODO: change
     treasure_room_walk_speed = 1
     amulet_duration = 50
     skull_killed_reward = 2000
@@ -103,6 +103,10 @@ class Env:
         elif self.game_state == GameState.in_treasure_room:
             back_to_maze = self.treasure_room.update(self.player, action)
             if back_to_maze:
+                if self.player.dead:
+                    if self.player.health == 0:
+                        return self._get_reward(), True  # player died
+                    self.player.health -= 1
                 self._reset_to_starting_point()
                 self.trigger_screen_state_redraw()
         else:
@@ -408,11 +412,13 @@ class Room:
 
 class TreasureRoom:
     ticks_before_ending = 100
+    number_of_lava_squares = 10
 
     def __init__(self, random):
         self.random = random
         self.ticks_since_start = 0
         self.coin_cell = None
+        self.lava_cells = self._generate_lava_positions()
         self._randomize_coin_position()
 
     # Returns whether the player's time in the treasure room has expired.
@@ -426,15 +432,47 @@ class TreasureRoom:
             player.score += Env.coin_collected_reward
             while player_cell == self.coin_cell:
                 self._randomize_coin_position()
+        elif player_cell in self.lava_cells:
+            player.die()
+            return True
 
         return False
 
     def _randomize_coin_position(self):
-        self.coin_cell = (self.random.randint(0, Room.room_size[1] - 1),
-                          self.random.randint(0, Room.room_size[0] - 1))
+        while True:
+            coin_cell = self._random_cell()
+            if coin_cell not in self.lava_cells:
+                break
+        self.coin_cell = coin_cell
+
+    def _random_cell(self):
+        return (self.random.randint(0, Room.room_size[1] - 1),
+                self.random.randint(0, Room.room_size[0] - 1))
+
+    def _generate_lava_positions(self):
+        assert TreasureRoom.number_of_lava_squares < Room.room_size[0] * Room.room_size[1] / 10
+        lava_cells = []
+        for _ in range(TreasureRoom.number_of_lava_squares):
+            while True:
+                y, x = self._random_cell()
+                if TreasureRoom._is_valid_lava_cell((y, x)) and \
+                        not [(other_y, other_x) for (other_y, other_x) in lava_cells if
+                             abs(other_y - y) <= 1 and abs(other_x - x) <= 1]:
+                    break
+            lava_cells.append((y, x))
+        return lava_cells
+
+    @staticmethod
+    def _is_valid_lava_cell(cell):
+        y, x = cell
+        # We don't want lava to spawn right next to the wall, since that could be where player
+        # will be spawned.
+        return 1 < y < Room.room_size[1] - 2 and 1 < x < Room.room_size[0] - 2
 
     def initialize_screen_state(self, screen_state):
         screen_state[0, :, Env.channels['treasure_room_background']] = True
+        for y, x in self.lava_cells:
+            screen_state[y, x, Env.channels['lava']] = True
 
     def update_screen_state(self, screen_state):
         screen_state[:, :, Env.channels['coin']] = False
@@ -447,6 +485,7 @@ _item_collected_reward = {
     InventoryItem.torch: Env.torch_collected_reward,
     InventoryItem.amulet: Env.amulet_collected_reward
 }
+
 
 class Player:
     _max_hearths = 5
