@@ -70,9 +70,9 @@ class WalkingEntity:
         self.start_direction = start_direction
         # Just for documentation, overridden in reset().
         self.cell, self.previous_cell, self.direction, self.ticks_since_moved = None, None, None, None
-        self.reset()
+        self.reset_walking_entity()
 
-    def reset(self):
+    def reset_walking_entity(self):
         self.cell = self.start_cell
         self.direction = self.start_direction
         self.previous_cell = None
@@ -118,6 +118,7 @@ class Player(WalkingEntity):
     def __init__(self, level, start_cell, ticks_per_move, start_health):
         super().__init__(level, start_cell, ticks_per_move, Direction.right)
         self.health = start_health
+        self.score = 0
 
     def update(self, action):
         if action in _action_to_direction:
@@ -125,6 +126,9 @@ class Player(WalkingEntity):
             if new_direction in _tile_directions[self.level.at(self.cell)]:
                 self.direction = new_direction
         super().update_position()
+        if self.level.is_coin_at(self.cell):
+            self.level.collect_coin_at(self.cell)
+            self.score += Env.score_per_coin
 
 
 class Level:
@@ -132,14 +136,29 @@ class Level:
 
     def __init__(self, layout, enemies_starts, player_start):
         self.layout, self.enemies_starts, self.player_start = layout, enemies_starts, player_start
+        self.coins = None
+        self._initialize_coins(layout)
 
-    def initialize_state(self, state):
+    def _initialize_coins(self, layout):
+        self.coins = np.zeros(Level.level_size, dtype=np.bool)
+        for row in range(Level.level_size[0]):
+            for col in range(Level.level_size[1]):
+                if layout[row][col] != LevelTile.empty:
+                    self.coins[row, col] = True
+
+    def initialize_state(self, screen_state):
         for col in range(Level.level_size[1]):
             for row in range(Level.level_size[0]):
-                state[row, col, Env.tile_to_channel[self.layout[row][col]]] = True
+                screen_state[row, col, Env.tile_to_channel[self.layout[row][col]]] = True
 
     def at(self, cell):
         return self.layout[cell[0]][cell[1]]
+
+    def is_coin_at(self, cell):
+        return self.coins[cell]
+
+    def collect_coin_at(self, cell):
+        self.coins[cell] = False
 
     @staticmethod
     def load_level(level_name):
@@ -197,6 +216,7 @@ class Env:
     player_ticks_per_move = 2
     enemy_ticks_per_move = 2
     player_max_health = 2
+    score_per_coin = 1
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -204,11 +224,13 @@ class Env:
         self.random = np.random.RandomState() if random_state is None else random_state
         self.screen_size = (Level.level_size[0] + 1, Level.level_size[1])  # 1 row for the HUD
         self.level = Level.load_level(Env.level_name)
+        self.last_score = 0
         # Just for documentation, overridden in reset().
         self.screen_state, self.player, self.player_pos_inside_cell, self.enemies = None, None, None, None
-        self.reset()
+        self.soft_reset()
 
-    def reset(self):
+    # Called after player loses one hearth.
+    def soft_reset(self):
         self.player = Player(self.level, self.level.player_start, Env.player_ticks_per_move, Env.player_max_health)
         self.enemies = []
         for enemy_start in self.level.enemies_starts:
@@ -220,13 +242,16 @@ class Env:
         self.player.update(action)
         for enemy in self.enemies:
             enemy.update()
+        score_gain = self.player.score - self.last_score
+        self.last_score = self.player.score
+
         if self._collision_occurred():
             if self.player.health == 0:
-                return 0, True
+                return score_gain, True
             self._reset()
             self.player.health -= 1
         self._update_screen_state(self.screen_state)
-        return 0, False
+        return score_gain, False
 
     def _collision_occurred(self):
         for enemy in self.enemies:
@@ -236,9 +261,9 @@ class Env:
         return False
 
     def _reset(self):
-        self.player.reset()
+        self.player.reset_walking_entity()
         for enemy in self.enemies:
-            enemy.reset()
+            enemy.reset_walking_entity()
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
