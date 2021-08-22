@@ -107,11 +107,25 @@ class Enemy(WalkingEntity):
     def __init__(self, random, level, start_cell, ticks_per_move):
         self.random = random
         super().__init__(level, start_cell, ticks_per_move, random.choice(Direction))
+        self.dead = False
 
-    def update(self):
+    def update(self, player):
+        if self.dead:
+            return
+
         possible_directions = _tile_directions[self.level.at(self.cell)] - {self.direction}
         self.direction = self.random.choice(list(possible_directions))
         super().update_position()
+
+        if self.cell == player.cell or {self.cell, self.previous_cell} == {player.cell, player.previous_cell}:
+            if player.power_pill_active:
+                self.die()
+                player.handle_killed_enemy()
+            else:
+                player.die()
+
+    def die(self):
+        self.dead = True
 
 
 class Player(WalkingEntity):
@@ -121,6 +135,8 @@ class Player(WalkingEntity):
         self.score = 0
         self.power_pill_active = False
         self.ticks_since_power_pill_activated = None  # Only meaningful if self.power_pill_active == True.
+        self.enemies_killed_by_power_pill = 0
+        self.dead = False
 
     def update(self, action):
         if self.power_pill_active:
@@ -142,10 +158,27 @@ class Player(WalkingEntity):
         for power_pill in self.level.power_pills:
             if power_pill == self.cell:
                 self.level.power_pills.remove(power_pill)
-                self.power_pill_active = True
-                self.ticks_since_power_pill_activated = 0
+                self._activate_power_pill()
                 print('activated')
                 break
+
+    def die(self):
+        self.dead = True
+
+    def _activate_power_pill(self):
+        self.score += Env.power_pill_reward
+        if not self.power_pill_active:
+            self.enemies_killed_by_power_pill = 0
+        self.power_pill_active = True
+        self.ticks_since_power_pill_activated = 0
+
+    def handle_killed_enemy(self):
+        self.score += Env.enemy_killed_reward[self.enemies_killed_by_power_pill]
+        self.enemies_killed_by_power_pill += 1
+
+    def soft_reset(self):
+        super().reset_walking_entity()
+        self.dead = False
 
 
 class Level:
@@ -246,8 +279,10 @@ class Env:
     player_ticks_per_move = 2
     enemy_ticks_per_move = 2
     player_max_health = 2
-    score_per_coin = 1
+    score_per_coin = 10
     power_pill_duration = 50
+    power_pill_reward = 50
+    enemy_killed_reward = [200, 400, 800, 1600]
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -273,12 +308,11 @@ class Env:
         action = Env.action_map[action_num]
         self.player.update(action)
         for enemy in self.enemies:
-            enemy.update()
+            enemy.update(self.player)
         score_gain = self.player.score - self.last_score
         self.last_score = self.player.score
 
-        if self._collision_occurred():
-            # TODO: check if power pill is active
+        if self.player.dead:
             if self.player.health == 0:
                 return score_gain, True
             self._soft_reset()
@@ -286,15 +320,8 @@ class Env:
         self._update_screen_state(self.screen_state)
         return score_gain, False
 
-    def _collision_occurred(self):
-        for enemy in self.enemies:
-            if enemy.cell == self.player.cell or \
-                    {enemy.cell, enemy.previous_cell} == {self.player.cell, self.player.previous_cell}:
-                return True
-        return False
-
     def _soft_reset(self):
-        self.player.reset_walking_entity()
+        self.player.soft_reset()
         for enemy in self.enemies:
             enemy.reset_walking_entity()
 
@@ -319,7 +346,8 @@ class Env:
         screen_state[0, :self.player.health, Env.channels['gauge_health']] = True
         screen_state[self.player.cell[0] + 1, self.player.cell[1], Env.channels['player']] = True
         for enemy in self.enemies:
-            screen_state[enemy.cell[0] + 1, enemy.cell[1], Env.channels['enemy']] = True
+            if not enemy.dead:
+                screen_state[enemy.cell[0] + 1, enemy.cell[1], Env.channels['enemy']] = True
         self.level.update_screen_state(screen_state[1:, :, :])
 
     def handle_human_action(self, action):
