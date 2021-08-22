@@ -45,7 +45,7 @@ class Env:
     jump_force = 0.9
     # How hard player has to hit the ground to die.
     lethal_impact_force = 1.3
-    initial_room = 'room-35'  # TODO: change
+    initial_room = 'room-35'
     treasure_room_walk_speed = 1
     amulet_duration = 50
     skull_killed_reward = 2000
@@ -366,7 +366,7 @@ class MazeCheckpoint:
                  ticks_since_amulet_activated):
         self.room_name, self.soft_reset_cell, self.player_pos, self.player_speed, self.player_state, \
         self.exiting_ladder, self.player_health, self.amulet_active, self.ticks_since_amulet_activated = \
-            room_name, soft_reset_cell, np.copy(player_pos), np.copy(player_speed), player_state, exiting_ladder,\
+            room_name, soft_reset_cell, np.copy(player_pos), np.copy(player_speed), player_state, exiting_ladder, \
             player_health, amulet_active, ticks_since_amulet_activated
 
     def apply_checkpoint(self, environment):
@@ -552,7 +552,7 @@ class TreasureRoom:
 
 class TreasureRoomCheckpoint:
     def __init__(self, ticks_since_start, coin_cell, lava_cells, player_pos):
-        self.ticks_since_start, self.coin_cell, self.lava_cells, self.player_pos =\
+        self.ticks_since_start, self.coin_cell, self.lava_cells, self.player_pos = \
             ticks_since_start, coin_cell, lava_cells, np.copy(player_pos)
 
     def apply_checkpoint(self, environment):
@@ -588,8 +588,6 @@ class Player:
     def reset(self, position):
         self.soft_reset(position)
         self.health = Player._max_hearths
-        # self.inventory = []
-        # self.inventory = [InventoryItem.key] * 3  # TODO
         self.inventory = []
         self.score = 0
         self.amulet_active = False
@@ -658,7 +656,6 @@ class Player:
         else:
             self._ignored_until_released = []
 
-        print(self.player_state, self.player_pos, self.player_speed, action)  # TODO: remove
         curr_y, curr_x = self.get_player_cell()
         self._update_player_speed(maze, action)
         new_player_pos = self._calculate_new_position(maze, action)
@@ -789,8 +786,6 @@ class Player:
                 self._ignore_until_released('left', 'right', 'jump')
                 return PlayerState.on_ladder
         if self.player_state == PlayerState.flying:
-            # if (can_stand_on_ladder or can_stand) and self.player_speed[0] > Env.lethal_impact_force:
-            #     self.die()
             if can_stand_on_ladder:
                 return PlayerState.above_ladder
             if can_stand:
@@ -934,7 +929,6 @@ class CollectableItem:
             player.collect(self.item_type)
 
 
-# TODO: unite with CollectableItem
 class Coin:
     def __init__(self, position):
         self.position = position
