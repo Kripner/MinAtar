@@ -176,7 +176,6 @@ class Player(WalkingEntity):
             if self.ticks_since_power_pill_activated == Env.power_pill_duration:
                 self.power_pill_active = False
                 self.ticks_since_power_pill_activated = None
-                print('deactivated')
 
         if action in _action_to_direction:
             new_direction = _action_to_direction[action]
@@ -191,7 +190,6 @@ class Player(WalkingEntity):
             if power_pill == self.cell:
                 self.level.power_pills.remove(power_pill)
                 self._activate_power_pill()
-                print('activated')
                 break
 
     def die(self):
