@@ -133,6 +133,66 @@ The player controls a cannon at the bottom of the screen and can shoot bullets u
 
 [Video](https://www.youtube.com/watch?v=W-9Ru-RDEoI)
 
+### Montezuma's Revenge
+The player navigates through a complex world with different kinds of enemies,
+traps, door+key systems, and rewards. Only one section of the world -- a room
+-- is displayed at any given time and the player can transition between the
+rooms by walking to the edge of the screen. There are 23 regular rooms and 1
+treasure room arranged in a pyramidal shape. See
+`docs/montezumas_revenge-map.png`.
+When navigating the regular rooms, the player can jump and move left or right.
+They have an inventory, which can keep at most 5 items at a time.
+The mechanism in those rooms are:
+- Ropes/Ladders -- The player can jump on or climb the rope.
+- Conveyor belts -- When the player stands on them, they push them to the left.
+- Disappearing floors -- Periodically appearing and disappearing.
+- Coins/Jewels -- Collecting them delivers a reward of +1000. They can't be
+  collected when the inventory is full, although they don't occupy space in it
+  once collected.
+- Keys and doors -- Doors can only be opened if a key is in the inventory. Key
+  can be collected by simply touching it.
+- Laser doors - They periodically appear and disappear. Touching them results in
+  death.
+- Lava - Touching it results in death.
+- Skulls - They either bounce or patrol.
+- Snakes - They standstill.
+- Spiders - They patrol. Touching a skull, a snake, or spider results in death
+  of both the player and the creature.
+- Amulets - After collecting an amulet, the player is immune to enemies for 50
+  ticks.
+- Swords - After collecting a sword, it appears in the inventory. After that, if
+  the player touches a skull or a spider, the enemy is killed, the sword is
+  discarded and a reward is allocated -- +2000 for a skull or +3000 for a
+  spider. Snakes are immune to swords.
+- Torches - After collecting a torch, it appears in the inventory. Some rooms in
+  the maze are "dark", meaning that when the player enters, they can only see
+  themselves, enemies, lava, and disappearing floors. However, if they possess a
+  torch, they can see everything.
+
+Each of those mechanisms is represented by a dedicated channel.
+Besides touching lava, a laser door, or an enemy, the player dies if they fall from too high.
+The game ends after the player loses 5 hearts. The current number of hearts and
+the current content of the inventory are both displayed in the upper row of the
+screen (hearts on the left and inventory on the right).
+
+If the player manages to enter the treasure room (requiring them to collect all
+keys and probably a torch), they get to be in it for 100 ticks before the game
+is restarted. The physics mode changes - the player can move in any of the 4
+directions freely and no gravity is present. 10 lava blocks and a jewel are at
+random locations. The player can collect the jewel. After that, it moves to
+another location at random. If the player touches the lava, they die.
+
+To make the game easier to explore, human agents can press 's' and 'l' to create
+(save) or load a checkpoint. After loading a checkpoint, the player is moved to the
+saved location, but the state of the world is not restored (meaning doors,
+enemies, etc.).
+
+The layout and metadata of all rooms are described by `json` and `png` files in
+`data/montezumas_revenge`. The color coding used is specified in
+`docs/montezumas_revenge-color_coding.png`.  The `png` files must be PNG images,
+20 x 19, 8-bit/color RGB, non-interlaced. Be sure not to include the alpha
+channel (RGBA).
+
 ## Citing MinAtar
 If you use MinAtar in your research please cite the following:
 
