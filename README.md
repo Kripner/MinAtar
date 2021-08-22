@@ -151,6 +151,8 @@ square represents a piece of the maze instead of being either wall or empty.
 More precisely, each square specifies in which directions an agent can depart
 from it. These types of squares are represented by one channel each. Special
 channels are dedicated to coins and power pills.
+Number of hearts remaining is displayed in the left part of the first row of
+the screen.
 The shape of the maze is loaded from `data/pacman/level.json` and
 `data/pacman/level.png`. The color coding used for specifying the shape can be
 found in `docs/pacman-color_coding.png`. For humans, `docs/pacman-maze.png`
