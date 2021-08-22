@@ -133,6 +133,30 @@ The player controls a cannon at the bottom of the screen and can shoot bullets u
 
 [Video](https://www.youtube.com/watch?v=W-9Ru-RDEoI)
 
+### Ms. Pac-Man
+The player navigates through a maze, picking up coins along the way. Each coin
+is worth +10 reward. The player can change their direction but can only stop
+when they bump into a wall. There are 4 enemies in the maze moving randomly.
+They spawn in the center of the maze. If the player collides with an enemy,
+they lose one of 3 hearts, and positions of both the player and all enemies
+reset. When all hearts are lost, the game ends.
+There are 4 power pills positioned in the corners of the maze. If the player
+collects one of them, (1) a reward of +50 is assigned and (2) for the next 50
+ticks, colliding with an enemy kills the enemy (instead of the player) and the
+player gets a reward. For killing the 1st, 2nd, 3rd, or 4th enemy, the player
+receives a reward of +200, +400, +800, and +1600 respectively. 20 ticks after an
+enemy is killed, it respawns in its original location.
+The game is hard to play for a human agent since for efficiency reasons, each
+square represents a piece of the maze instead of being either wall or empty.
+More precisely, each square specifies in which directions an agent can depart
+from it. These types of squares are represented by one channel each. Special
+channels are dedicated to coins and power pills.
+The shape of the maze is loaded from `data/pacman/level.json` and
+`data/pacman/level.png`. The color coding used for specifying the shape can be
+found in `docs/pacman-color_coding.png`. For humans, `docs/pacman-maze.png`
+shows the shape of the maze in a friendlier way.
+
+
 ## Citing MinAtar
 If you use MinAtar in your research please cite the following:
 
