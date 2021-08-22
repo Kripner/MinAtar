@@ -1412,7 +1412,7 @@ class RoomCache:
 
 
 def _get_file_location(file_name):
-    return os.path.join('data/montezumas-revenge', file_name)
+    return os.path.join('data/montezumas_revenge', file_name)
 
 
 def _hex(hexcode):
