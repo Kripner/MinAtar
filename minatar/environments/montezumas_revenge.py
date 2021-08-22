@@ -956,7 +956,7 @@ class Coin:
         state[y + 1, x, Env.channels['coin']] = True
 
     def update(self, player):
-        if self.collected:
+        if self.collected or player.is_inventory_full():
             return
         if player.get_player_cell() == self.position:
             self.collected = True
