@@ -27,6 +27,13 @@ class Direction(Enum):
     down = 3
 
 
+_opposite_direction = {
+    Direction.left: Direction.right,
+    Direction.up: Direction.down,
+    Direction.right: Direction.left,
+    Direction.down: Direction.up
+}
+
 _action_to_direction = {
     'left': Direction.left,
     'up': Direction.up,
@@ -113,7 +120,18 @@ class Enemy(WalkingEntity):
         if self.dead:
             return
 
-        possible_directions = _tile_directions[self.level.at(self.cell)] - {self.direction}
+        curr_tile = self.level.at(self.cell)
+        possible_directions, alternative_directions = [], []
+        for direction in _tile_directions[curr_tile]:
+            new_cell = WalkingEntity._wrap_cell_around(_step_in_direction(self.cell, direction))
+            if self.level.at(new_cell) == LevelTile.empty:
+                continue
+            alternative_directions.append(direction)
+            if direction == _opposite_direction[self.direction]:
+                continue
+            possible_directions.append(direction)
+        if not possible_directions:
+            possible_directions = alternative_directions
         self.direction = self.random.choice(list(possible_directions))
         super().update_position()
 
@@ -185,7 +203,7 @@ class Level:
     level_size = (13, 20)  # height, width
 
     def __init__(self, layout, enemies_starts, player_start, power_pills):
-        self.layout, self.enemies_starts, self.player_start, self.power_pills =\
+        self.layout, self.enemies_starts, self.player_start, self.power_pills = \
             layout, enemies_starts, player_start, power_pills
         self.coins = None
         self._initialize_coins(layout)
