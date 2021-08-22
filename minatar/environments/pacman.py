@@ -111,15 +111,24 @@ class WalkingEntity:
 
 
 class Enemy(WalkingEntity):
-    def __init__(self, random, level, start_cell, ticks_per_move):
+    def __init__(self, random, level, start_cell):
+        super().__init__(level, start_cell, Env.enemy_ticks_per_move, random.choice(Direction))
         self.random = random
-        super().__init__(level, start_cell, ticks_per_move, random.choice(Direction))
-        self.dead = False
+        self.dead, self.ticks_since_died = None, None
+        self.soft_reset()
 
     def update(self, player):
         if self.dead:
+            self.ticks_since_died += 1
+            if self.ticks_since_died == Env.enemy_death_duration:
+                self.soft_reset()
             return
 
+        self.direction = self.random.choice(self._get_possible_directions())
+        super().update_position()
+        self._check_for_collision(player)
+
+    def _get_possible_directions(self):
         curr_tile = self.level.at(self.cell)
         possible_directions, alternative_directions = [], []
         for direction in _tile_directions[curr_tile]:
@@ -130,11 +139,11 @@ class Enemy(WalkingEntity):
             if direction == _opposite_direction[self.direction]:
                 continue
             possible_directions.append(direction)
-        if not possible_directions:
-            possible_directions = alternative_directions
-        self.direction = self.random.choice(list(possible_directions))
-        super().update_position()
+        if len(possible_directions) == 0:
+            return alternative_directions
+        return possible_directions
 
+    def _check_for_collision(self, player):
         if self.cell == player.cell or {self.cell, self.previous_cell} == {player.cell, player.previous_cell}:
             if player.power_pill_active:
                 self.die()
@@ -145,10 +154,15 @@ class Enemy(WalkingEntity):
     def die(self):
         self.dead = True
 
+    def soft_reset(self):
+        super().reset_walking_entity()
+        self.dead = False
+        self.ticks_since_died = 0
+
 
 class Player(WalkingEntity):
-    def __init__(self, level, start_cell, ticks_per_move, start_health):
-        super().__init__(level, start_cell, ticks_per_move, Direction.right)
+    def __init__(self, level, start_cell, start_health):
+        super().__init__(level, start_cell, Env.player_ticks_per_move, Direction.right)
         self.health = start_health
         self.score = 0
         self.power_pill_active = False
@@ -301,6 +315,7 @@ class Env:
     power_pill_duration = 50
     power_pill_reward = 50
     enemy_killed_reward = [200, 400, 800, 1600]
+    enemy_death_duration = 20
 
     # This signature is required by the Environment class, although ramping is not used here.
     def __init__(self, ramping=None, random_state=None):
@@ -315,11 +330,11 @@ class Env:
     # Called after player loses one hearth.
     def reset(self):
         self.level = Level.load_level(Env.level_name)
-        self.player = Player(self.level, self.level.player_start, Env.player_ticks_per_move, Env.player_max_health)
+        self.player = Player(self.level, self.level.player_start, Env.player_max_health)
         self.last_score = 0
         self.enemies = []
         for enemy_start in self.level.enemies_starts:
-            self.enemies.append(Enemy(self.random, self.level, enemy_start, Env.enemy_ticks_per_move))
+            self.enemies.append(Enemy(self.random, self.level, enemy_start))
         self.screen_state = self._create_screen_state()
 
     def act(self, action_num):
@@ -341,7 +356,7 @@ class Env:
     def _soft_reset(self):
         self.player.soft_reset()
         for enemy in self.enemies:
-            enemy.reset_walking_entity()
+            enemy.soft_reset()
 
     def state_shape(self):
         return *self.screen_size, len(self.channels)
