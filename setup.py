@@ -22,4 +22,5 @@ setup(
         'seaborn>=0.9.0',
         'six>=1.12.0',
         'torch>=1.0.0',
+        'Pillow~=8.3.1',
     ])
