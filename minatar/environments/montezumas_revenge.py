@@ -44,7 +44,7 @@ class Env:
     gravity = 0.3
     jump_force = 0.9
     # How hard player has to hit the ground to die.
-    lethal_impact_force = 1
+    lethal_impact_force = 1.3
     initial_room = 'room-35'  # TODO: change
     treasure_room_walk_speed = 1
     amulet_duration = 50
@@ -469,7 +469,8 @@ class Room:
         return self.moving_data[cell[0]][cell[1]]
 
     def is_solid_at(self, cell):
-        return self.at(cell) in [RoomTile.wall, RoomTile.moving_sand] or self.at_moving(cell) in [MovingObject.door]
+        return self.at(cell) in [RoomTile.wall, RoomTile.moving_sand] or \
+               self.at_moving(cell) in [MovingObject.door, MovingObject.disappearing_wall]
 
 
 class TreasureRoom:
