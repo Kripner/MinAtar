@@ -3,6 +3,8 @@ from enum import Enum
 from collections import namedtuple
 import numpy as np
 import os
+import io
+import pkgutil
 import json
 from PIL import Image
 import math
@@ -1387,27 +1389,31 @@ class RoomCache:
 
     @staticmethod
     def _load_room(room_name):
-        file_name = _get_file_location(room_name + '.json')
-        with open(file_name, 'r') as room_file:
-            data = json.load(room_file)
-            room_data = RoomCache._load_room_data(_get_file_location(data['data_file']))
-            neighbours = {neighbour: data[neighbour] for neighbour in Room.neighbours_names if
-                          neighbour in data}
-            is_dark = False if 'is_dark' not in data else data['is_dark']
-            return Room(room_name, room_data, neighbours, is_dark)
+        data = json.loads(RoomCache._load_resource_utf8(room_name + '.json'))
+        room_data = RoomCache._load_room_data(data['data_file'])
+        neighbours = {neighbour: data[neighbour] for neighbour in Room.neighbours_names if
+                      neighbour in data}
+        is_dark = False if 'is_dark' not in data else data['is_dark']
+        return Room(room_name, room_data, neighbours, is_dark)
 
     @staticmethod
     def _load_room_data(data_file):
         assert data_file[-4:] == '.png'
-        data_image = Image.open(data_file)
+        image_bytes = io.BytesIO(RoomCache._load_resource(data_file))
+        data_image = Image.open(image_bytes)
         data_pixels = data_image.load()
         assert data_image.size == Room.room_size
         w, h = data_image.size
         return [[_color_to_tile[data_pixels[x, y]] for x in range(w)] for y in range(h)]
 
+    @staticmethod
+    def _load_resource(resource_name):
+        resource = os.path.join('data', 'montezumas_revenge', resource_name)
+        return pkgutil.get_data(__name__, resource)
 
-def _get_file_location(file_name):
-    return os.path.join('data/montezumas_revenge', file_name)
+    @staticmethod
+    def _load_resource_utf8(resource_name):
+        return RoomCache._load_resource(resource_name).decode('utf-8')
 
 
 def _hex(hexcode):

@@ -9,6 +9,11 @@ setup(
     author_email='kjyoung@ualberta.com',
     license='GPL',
     packages=['minatar', 'minatar.environments'],
+    package_data={
+        'minatar': ['environments/data/pacman/*', 'environments/data/montezumas_revenge/*'],
+        'minatar.environments': ['data/pacman/*', 'data/montezumas_revenge/*']
+    },
+    include_package_data=True,
     install_requires=[
         'cycler>=0.10.0',
         'kiwisolver>=1.0.1',

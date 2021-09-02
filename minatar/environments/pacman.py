@@ -1,6 +1,8 @@
 from enum import Enum
 import numpy as np
 import os
+import io
+import pkgutil
 import json
 from PIL import Image
 
@@ -252,34 +254,37 @@ class Level:
 
     @staticmethod
     def load_level(level_name):
-        file_name = _get_file_location(level_name + '.json')
-        with open(file_name, 'r') as level_file:
-            descriptor_data = json.load(level_file)
-            assert 'layout_file' in descriptor_data, 'level descriptor file must specify level layout file'
-            layout_file = _get_file_location(descriptor_data['layout_file'])
-            layout = Level._load_level_layout(layout_file)
-            enemies_starts = list(map(Level._position_array_to_tuple, descriptor_data['enemies_starts']))
-            player_start = Level._position_array_to_tuple(descriptor_data['player_start'])
-            power_pills = list(map(Level._position_array_to_tuple, descriptor_data['power_pills']))
-            return Level(layout, enemies_starts, player_start, power_pills)
+        descriptor_data = json.loads(Level._load_resource_utf8(level_name + '.json'))
+        assert 'layout_file' in descriptor_data, 'level descriptor file must specify level layout file'
+        layout = Level._load_level_layout(descriptor_data['layout_file'])
+        enemies_starts = list(map(Level._position_array_to_tuple, descriptor_data['enemies_starts']))
+        player_start = Level._position_array_to_tuple(descriptor_data['player_start'])
+        power_pills = list(map(Level._position_array_to_tuple, descriptor_data['power_pills']))
+        return Level(layout, enemies_starts, player_start, power_pills)
 
     @staticmethod
     def _load_level_layout(layout_file):
         assert layout_file[-4:] == '.png'
-        layout_image = Image.open(layout_file)
+        image_bytes = io.BytesIO(Level._load_resource(layout_file))
+        layout_image = Image.open(image_bytes)
         layout_pixels = layout_image.load()
         assert layout_image.size == (Level.level_size[1], Level.level_size[0])
         w, h = layout_image.size
         return [[_color_to_tile[layout_pixels[col, row]] for col in range(w)] for row in range(h)]
 
     @staticmethod
+    def _load_resource(resource_name):
+        resource = os.path.join('data', 'pacman', resource_name)
+        return pkgutil.get_data(__name__, resource)
+
+    @staticmethod
+    def _load_resource_utf8(resource_name):
+        return Level._load_resource(resource_name).decode('utf-8')
+
+    @staticmethod
     def _position_array_to_tuple(position_array):
         assert len(position_array) == 2
         return position_array[0], position_array[1]
-
-
-def _get_file_location(file_name):
-    return os.path.join('data', 'pacman', file_name)
 
 
 class Env:
